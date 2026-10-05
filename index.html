@@ -94,7 +94,7 @@ try {
     $('previous').hidden = false;
     $('previous').innerHTML = `<span class="err">⚠️ L'essai précédent s'est interrompu</span><br>
       <span class="muted">Étape : ${prev.phase}${prev.done ? ` — ${prev.phase === 'séparation' ? 'tranche' : 'morceau du modèle'} ${prev.done}/${prev.total}` : ''}
-      ${prev.step ? ` (calcul en cours, étape ${prev.step}/${prev.steps})` : ''}
+      ${prev.step ? ` (étape : ${prev.step})` : ''}
       ${prev.duration ? ` — morceau de ${fmt(prev.duration)}` : ''}
       ${prev.provider ? ` — calcul sur ${prev.provider === 'wasm' ? 'processeur' : 'carte graphique'}` : ''}</span>`;
   }
@@ -154,7 +154,7 @@ $('go').addEventListener('click', async () => {
     const tSep = performance.now();
     $('status').textContent = 'Séparation en cours…';
     let segment = 1, segments = '?';
-    sep.onStep = (step, steps) => crumb({ phase: 'séparation', done: segment, total: segments, step, steps, duration, provider });
+    sep.onStep = (step) => crumb({ phase: 'séparation', done: segment, total: segments, step, duration, provider });
     stems = await sep.separate(left, right, ({ done, total, segmentMs }) => {
       $('bar').value = done / total;
       const elapsed = (performance.now() - tSep) / 1000;

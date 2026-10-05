@@ -64,7 +64,12 @@ export class Separator {
       loadedBytes += bytes.length;
       onStatus(`Modèle : morceau ${i + 1}/${this.pieces.length} (${(loadedBytes / 1e6).toFixed(0)} Mo)`);
       const gpu = this.provider === 'webgpu';
-      const ep = gpu && i === 0 ? { name: 'webgpu', forceCpuNodeNames: CPU_NODES } : this.provider;
+      // Sans storageBufferCacheMode 'lazyRelease', onnxruntime garde en réserve
+      // toute la mémoire GPU déjà utilisée par les 21 morceaux : Safari
+      // iPhone fermait la page à la fin de la première tranche.
+      const ep = gpu
+        ? { name: 'webgpu', storageBufferCacheMode: 'lazyRelease', ...(i === 0 ? { forceCpuNodeNames: CPU_NODES } : {}) }
+        : this.provider;
       this.sessions.push(await this.ort.InferenceSession.create(bytes, {
         executionProviders: [ep],
         graphOptimizationLevel: 'all',
@@ -88,7 +93,7 @@ export class Separator {
       const piece = this.pieces[i];
       const feeds = {};
       for (const name of piece.inputs) feeds[name] = map.get(name);
-      this.onStep?.(i + 1, this.pieces.length);
+      this.onStep?.(`${i + 1}/${this.pieces.length}`);
       const out = await this.sessions[i].run(feeds);
       for (const [name, tensor] of Object.entries(out)) {
         if (!keep.has(name) && !this.lastUse.has(name)) tensor.dispose();
@@ -101,6 +106,7 @@ export class Separator {
         }
       }
     }
+    this.onStep?.('lecture du résultat');
     const freq = await map.get(this.freqName).getData(true);
     const time = await map.get(this.timeName).getData(true);
     return { freq, time };
@@ -137,6 +143,7 @@ export class Separator {
       }
 
       const { freq, time } = await this._runSegment(segL, segR);
+      this.onStep?.('assemblage');
 
       for (let t = 0; t < 4; t++) {
         const spec = freqToTimeDomain(freq, t);

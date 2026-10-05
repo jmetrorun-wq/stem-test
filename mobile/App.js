@@ -11,13 +11,18 @@ import { AudioContext, decodeAudioData } from 'react-native-audio-api';
 import * as ort from 'onnxruntime-react-native';
 
 import { Separator, SAMPLE_RATE, TRACKS, toInt16 } from '../separator.js';
-import { MONOLITH_URL, MonolithRunner } from './monolithRunner.js';
+import { MonolithRunner } from './monolithRunner.js';
+
+// Modèle réexporté avec l'attention par paquets (tools/export_htdemucs.py) :
+// ~1,3 Go au pic au lieu de 2,6-3,2 Go (l'app était tuée par iOS). Servi
+// depuis le Mac par le Wi-Fi le temps des tests (trop gros pour le dépôt).
+const MODEL_URL = 'http://10.10.0.44:8000/htdemucs_chunk128.onnx';
 
 const LABELS = { drums: 'Batterie', bass: 'Basse', other: 'Autres (guitare, piano…)', vocals: 'Voix' };
 const MODES = { cpu: 'processeur', coreml: 'Core ML (puce IA)' };
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-const modelFile = new File(Paths.document, 'htdemucs_embedded.onnx');
+const modelFile = new File(Paths.document, 'htdemucs_chunk128.onnx');
 // Trace d'avancement écrite sur disque : si iOS tue l'app (mémoire), on
 // retrouve au relancement l'étape où ça s'est arrêté.
 const crumbFile = new File(Paths.document, 'crumb.json');
@@ -29,9 +34,9 @@ async function ensureModel(onStatus) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      onStatus(`Téléchargement du modèle (172 Mo, une seule fois)… essai ${attempt}/3`);
+      onStatus(`Téléchargement du modèle (174 Mo, une seule fois)… essai ${attempt}/3`);
       if (modelFile.exists) modelFile.delete();
-      await File.downloadFileAsync(MONOLITH_URL, modelFile);
+      await File.downloadFileAsync(MODEL_URL, modelFile);
       return;
     } catch (e) {
       lastError = e;
@@ -86,9 +91,16 @@ export default function App() {
       await ensureModel(setStatus);
       setStatus('Chargement du modèle…');
       const runner = new MonolithRunner(ort);
+      // Optimisations de graphe désactivées : elles dupliquaient une partie
+      // du modèle (pic mesuré 2,4 Go avec, 1,3 Go sans, pour ~20 % de temps
+      // de calcul en plus).
       await runner.load(modelFile.uri, {
-        executionProviders: mode === 'coreml' ? [{ name: 'coreml' }, 'cpu'] : ['cpu'],
-        graphOptimizationLevel: 'all',
+        executionProviders: mode === 'coreml'
+          ? [{ name: 'coreml' }, { name: 'cpu', useArena: false }]
+          : [{ name: 'cpu', useArena: false }],
+        graphOptimizationLevel: 'disabled',
+        enableCpuMemArena: false,
+        enableMemPattern: false,
       });
       const loadSec = (Date.now() - t0) / 1000;
 

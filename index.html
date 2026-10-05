@@ -62,7 +62,7 @@
 
 <script type="module">
 import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.webgpu.min.mjs';
-import { Separator, SAMPLE_RATE, TRACKS } from './separator.js';
+import { Separator, SAMPLE_RATE, TRACKS, toInt16 } from './separator.js';
 
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 ort.env.wasm.numThreads = 1;
@@ -113,24 +113,27 @@ $('go').addEventListener('click', async () => {
   const t0 = performance.now();
   const timer = setInterval(() => { $('clock').textContent = fmt((performance.now() - t0) / 1000); }, 250);
   try {
-    // Modèle d'abord, morceau ensuite : on évite d'avoir les ~100 Mo du
-    // morceau décodé en mémoire pendant le pic du chargement du modèle.
-    crumb({ phase: 'chargement du modèle' });
-    const sep = new Separator(ort);
-    await sep.load((msg) => { $('status').textContent = msg; },
-      (piece, pieces) => crumb({ phase: 'chargement du modèle', done: piece, total: pieces }));
-    const loadSec = (performance.now() - t0) / 1000;
-    log(`Modèle chargé en ${loadSec.toFixed(1)} s`);
-
+    // Morceau d'abord, modèle ensuite : le décodage a un pic mémoire qui
+    // ne passait plus une fois le modèle chargé (Safari fermait la page).
+    // Le morceau est aussitôt compacté en Int16 et la version float32
+    // libérée avant de charger le modèle.
     $('status').textContent = 'Décodage du fichier audio…';
     crumb({ phase: 'décodage' });
-    let fileBytes = await $('file').files[0].arrayBuffer();
-    const audio = await new OfflineAudioContext(2, 1, SAMPLE_RATE).decodeAudioData(fileBytes);
-    fileBytes = null;
-    const left = audio.getChannelData(0);
-    const right = audio.numberOfChannels > 1 ? audio.getChannelData(1) : left;
+    let audio = await new OfflineAudioContext(2, 1, SAMPLE_RATE)
+      .decodeAudioData(await $('file').files[0].arrayBuffer());
     const duration = audio.duration;
-    log(`Morceau : ${fmt(duration)} (${audio.numberOfChannels} canal/aux)`);
+    const channels = audio.numberOfChannels;
+    const left = toInt16(audio.getChannelData(0));
+    const right = channels > 1 ? toInt16(audio.getChannelData(1)) : left;
+    audio = null;
+    log(`Morceau : ${fmt(duration)} (${channels} canal/aux)`);
+
+    crumb({ phase: 'chargement du modèle', duration });
+    const sep = new Separator(ort);
+    await sep.load((msg) => { $('status').textContent = msg; },
+      (piece, pieces) => crumb({ phase: 'chargement du modèle', done: piece, total: pieces, duration }));
+    const loadSec = (performance.now() - t0) / 1000;
+    log(`Décodage + modèle : ${loadSec.toFixed(1)} s`);
 
     const tSep = performance.now();
     $('status').textContent = 'Séparation en cours…';
@@ -147,7 +150,7 @@ $('go').addEventListener('click', async () => {
 
     $('status').textContent = 'Terminé';
     $('summary').innerHTML = `✓ Séparé en <b>${fmt(sepSec)}</b> pour un morceau de ${fmt(duration)}
-      (+ ${loadSec.toFixed(0)} s de chargement du modèle)`;
+      (+ ${loadSec.toFixed(0)} s de décodage et de chargement du modèle)`;
     buildPlayer();
   } catch (e) {
     crumb({ phase: 'fini' });

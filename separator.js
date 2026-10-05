@@ -104,7 +104,8 @@ export class Separator {
   }
 
   /**
-   * Sépare un morceau stéréo 44,1 kHz. Renvoie, pour chaque piste de
+   * Sépare un morceau stéréo 44,1 kHz fourni en Int16 (left/right, comme
+   * toInt16) pour économiser la mémoire. Renvoie, pour chaque piste de
    * TRACKS, { left: Int16Array, right: Int16Array }.
    */
   async separate(left, right, onProgress) {
@@ -127,8 +128,10 @@ export class Separator {
 
       const segL = new Float32Array(SEG);
       const segR = new Float32Array(SEG);
-      segL.set(left.subarray(start, start + segLen));
-      segR.set(right.subarray(start, start + segLen));
+      for (let i = 0; i < segLen; i++) {
+        segL[i] = left[start + i] / 32768;
+        segR[i] = right[start + i] / 32768;
+      }
 
       const { freq, time } = await this._runSegment(segL, segR);
 
@@ -168,6 +171,14 @@ export class Separator {
     }
     return Object.fromEntries(TRACKS.map((name, t) => [name, out[t]]));
   }
+}
+
+export function toInt16(samples) {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    out[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+  }
+  return out;
 }
 
 function prepareInput(left, right) {

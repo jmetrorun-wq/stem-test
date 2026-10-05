@@ -24,12 +24,43 @@ const MODEL_BASE = 'https://huggingface.co/monteslu/htdemucs-web-onnx/resolve/ma
 const CPU_NODES = ['/ReduceMean', '/Sub', '/Pow', '/ReduceMean_1', '/Clip', '/Sqrt', '/Add', '/Div',
   '/ReduceMean_2', '/Sub_1', '/Pow_1', '/ReduceMean_3', '/Clip_1', '/Sqrt_1', '/Add_1', '/Div_1'];
 
-// Pas de Cache API : elle gardait une seconde copie de chaque morceau en
-// mémoire pendant le chargement. Le cache HTTP du navigateur suffit.
+const CACHE_NAME = 'stem-test-model-v1';
+
+// Le modèle est gardé dans le Cache API : Hugging Face redirige vers des
+// URL signées qui changent, donc le cache HTTP ne servait pas et les
+// 126 Mo étaient retéléchargés à chaque essai. La réponse est écrite
+// directement dans le cache (sans copie en mémoire JS), puis relue.
+// Chaque téléchargement est retenté : sur iPhone, une coupure réseau
+// donnait « Load failed ».
 async function fetchBytes(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`Téléchargement impossible (${resp.status}) : ${url}`);
-  return new Uint8Array(await resp.arrayBuffer());
+  let cache = null;
+  try { cache = await caches.open(CACHE_NAME); } catch { cache = null; }
+  const name = url.split('/').pop();
+
+  const hit = await cache?.match(url);
+  if (hit) return { bytes: new Uint8Array(await hit.arrayBuffer()), cached: true };
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!cache) return { bytes: new Uint8Array(await resp.arrayBuffer()), cached: false };
+      try {
+        await cache.put(url, resp);
+        const stored = await cache.match(url);
+        if (stored) return { bytes: new Uint8Array(await stored.arrayBuffer()), cached: false };
+      } catch { /* cache plein ou indisponible : on télécharge sans */ }
+      cache = null;
+      const again = await fetch(url);
+      if (!again.ok) throw new Error(`HTTP ${again.status}`);
+      return { bytes: new Uint8Array(await again.arrayBuffer()), cached: false };
+    } catch (e) {
+      lastError = e;
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw new Error(`Téléchargement de ${name} impossible après 3 essais (${lastError?.message || lastError})`);
 }
 
 export class Separator {
@@ -47,7 +78,7 @@ export class Separator {
   // le chargement s'est arrêté si Safari ferme la page.
   async load(onStatus, onPiece = () => {}) {
     const manifest = JSON.parse(new TextDecoder().decode(
-      await fetchBytes(MODEL_BASE + 'htdemucs_split_manifest.json')));
+      (await fetchBytes(MODEL_BASE + 'htdemucs_split_manifest.json')).bytes));
     this.pieces = manifest.pieces;
     this.freqName = manifest.outputs.freq;
     this.timeName = manifest.outputs.time;
@@ -60,9 +91,9 @@ export class Separator {
     let loadedBytes = 0;
     for (let i = 0; i < this.pieces.length; i++) {
       onPiece(i + 1, this.pieces.length);
-      const bytes = await fetchBytes(MODEL_BASE + this.pieces[i].file);
+      const { bytes, cached } = await fetchBytes(MODEL_BASE + this.pieces[i].file);
       loadedBytes += bytes.length;
-      onStatus(`Modèle : morceau ${i + 1}/${this.pieces.length} (${(loadedBytes / 1e6).toFixed(0)} Mo)`);
+      onStatus(`Modèle : morceau ${i + 1}/${this.pieces.length} (${(loadedBytes / 1e6).toFixed(0)} Mo${cached ? ', déjà sur le téléphone' : ''})`);
       const gpu = this.provider === 'webgpu';
       // Sans storageBufferCacheMode 'lazyRelease', onnxruntime garde en réserve
       // toute la mémoire GPU déjà utilisée par les 21 morceaux : Safari

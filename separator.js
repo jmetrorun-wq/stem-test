@@ -1,9 +1,10 @@
-// Séparation de pistes htdemucs dans le navigateur (WebGPU), pensée pour
-// tenir dans la mémoire limitée d'un onglet Safari iPhone :
-// - modèle en 21 morceaux fp16 (126 Mo) au lieu d'un bloc fp32 (172 Mo) ;
-// - morceau traité par tranches de ~7,8 s, seul l'accumulateur de la
-//   tranche en cours est en float32 ;
-// - pistes résultat stockées en Int16 (moitié moins que du float32).
+// Séparation de pistes htdemucs, partagée entre le prototype web et l'app
+// native (mobile/) :
+// - Separator : découpage en tranches de ~7,8 s, STFT/iSTFT, assemblage par
+//   fondu, pistes résultat en Int16 (moitié moins que du float32) ;
+// - un « runner » exécute le modèle sur une tranche : ChainRunner ci-dessous
+//   pour le navigateur (21 morceaux fp16, WebGPU), MonolithRunner dans
+//   mobile/ (modèle fp32 d'un bloc, onnxruntime-react-native).
 // Pré/post-traitement (STFT, masque, iSTFT) repris de demucs-web (MIT).
 
 import { stft, istft, reflectPad } from './fft.js';
@@ -17,6 +18,7 @@ const SEG = 343980;
 const BINS = 2048;
 const FRAMES = 336;
 const STRIDE = Math.floor(SEG * 0.75);
+export const MODEL_SHAPES = { waveform: [1, 2, SEG], magSpec: [1, 4, BINS, FRAMES] };
 
 const MODEL_BASE = 'https://huggingface.co/monteslu/htdemucs-web-onnx/resolve/main/';
 // Prologue de normalisation fragile en fp16 : à garder sur CPU sinon NaN
@@ -63,15 +65,15 @@ async function fetchBytes(url) {
   throw new Error(`Téléchargement de ${name} impossible après 3 essais (${lastError?.message || lastError})`);
 }
 
-export class Separator {
-  // provider : 'webgpu' dans le navigateur ; 'cpu' pour les tests sous Node.
+// Modèle en 21 morceaux fp16 (126 Mo) enchaînés : pensé pour WebGPU dans
+// un onglet de navigateur.
+export class ChainRunner {
+  // provider : 'webgpu' ou 'wasm' (processeur, aussi utilisé sous Node).
   constructor(ort, provider = 'webgpu') {
     this.ort = ort;
     this.provider = provider;
     this.sessions = [];
     this.pieces = [];
-    // Appelé avant chaque étape du calcul d'une tranche (diagnostic).
-    this.onStep = null;
   }
 
   // onPiece(i, total) est appelé avant chaque morceau : sert à savoir où
@@ -111,8 +113,7 @@ export class Separator {
     }
   }
 
-  async _runSegment(left, right) {
-    const { waveform, magSpec } = prepareInput(left, right);
+  async run(waveform, magSpec, onStep) {
     const ort = this.ort;
     const map = new Map([
       ['mix', new ort.Tensor('float32', waveform, [1, 2, SEG])],
@@ -124,7 +125,7 @@ export class Separator {
       const piece = this.pieces[i];
       const feeds = {};
       for (const name of piece.inputs) feeds[name] = map.get(name);
-      this.onStep?.(`${i + 1}/${this.pieces.length}`);
+      onStep?.(`${i + 1}/${this.pieces.length}`);
       const out = await this.sessions[i].run(feeds);
       for (const [name, tensor] of Object.entries(out)) {
         if (!keep.has(name) && !this.lastUse.has(name)) tensor.dispose();
@@ -137,10 +138,18 @@ export class Separator {
         }
       }
     }
-    this.onStep?.('lecture du résultat');
+    onStep?.('lecture du résultat');
     const freq = await map.get(this.freqName).getData(true);
     const time = await map.get(this.timeName).getData(true);
     return { freq, time };
+  }
+}
+
+export class Separator {
+  constructor(runner) {
+    this.runner = runner;
+    // Appelé avant chaque étape du calcul d'une tranche (diagnostic).
+    this.onStep = null;
   }
 
   /**
@@ -173,7 +182,8 @@ export class Separator {
         segR[i] = right[start + i] / 32768;
       }
 
-      const { freq, time } = await this._runSegment(segL, segR);
+      const { waveform, magSpec } = prepareInput(segL, segR);
+      const { freq, time } = await this.runner.run(waveform, magSpec, this.onStep);
       this.onStep?.('assemblage');
 
       for (let t = 0; t < 4; t++) {

@@ -24,10 +24,24 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "permissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "plugins": [
-      ["react-native-audio-api", { "iosBackgroundMode": false }]
-    ]
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": false
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "08634fde-de89-4457-92e0-b7cc9915a5be"
+      }
+    }
   }
 }

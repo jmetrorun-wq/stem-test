@@ -13,6 +13,9 @@ export class MonolithRunner {
   constructor(ort) {
     this.ort = ort;
     this.session = null;
+    // Durée du dernier calcul du modèle, pour distinguer le temps du
+    // modèle de celui du pré/post-traitement en JS.
+    this.lastRunMs = 0;
   }
 
   async load(modelPath, sessionOptions) {
@@ -22,10 +25,12 @@ export class MonolithRunner {
   async run(waveform, magSpec, onStep) {
     const { Tensor } = this.ort;
     onStep?.('calcul du modèle');
+    const t0 = Date.now();
     const out = await this.session.run({
       input: new Tensor('float32', waveform, MODEL_SHAPES.waveform),
       x: new Tensor('float32', magSpec, MODEL_SHAPES.magSpec),
     });
+    this.lastRunMs = Date.now() - t0;
     return { freq: out.output.data, time: out.add_67.data };
   }
 }

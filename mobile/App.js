@@ -105,21 +105,25 @@ export default function App() {
       const loadSec = (Date.now() - t0) / 1000;
 
       const sep = new Separator(runner);
-      let segment = 1, segments = '?';
+      let segment = 1, segments = '?', modelMs = 0;
       sep.onStep = (step) => crumb({ phase: 'séparation', done: segment, total: segments, step, mode, duration });
       setStatus('Séparation en cours…');
       const tSep = Date.now();
       const result = await sep.separate(left, right, ({ done, total, segmentMs }) => {
         segment = done + 1; segments = total;
         const spent = (Date.now() - tSep) / 1000;
-        setDetail(`Tranche ${done}/${total} — ${(segmentMs / 1000).toFixed(1)} s la tranche — reste ~${fmt(spent / done * (total - done))}`);
+        modelMs += runner.lastRunMs;
+        setDetail(`Tranche ${done}/${total} — ${(segmentMs / 1000).toFixed(1)} s la tranche `
+          + `(modèle ${(runner.lastRunMs / 1000).toFixed(1)} s, audio ${((segmentMs - runner.lastRunMs) / 1000).toFixed(1)} s) `
+          + `— reste ~${fmt(spent / done * (total - done))}`);
       });
       const sepSec = (Date.now() - tSep) / 1000;
       crumb({ phase: 'fini' });
       setStems(result);
       setStatus('Terminé');
       setSummary(`✓ [${MODES[mode]}] Séparé en ${fmt(sepSec)} pour un morceau de ${fmt(duration)} `
-        + `(+ ${loadSec.toFixed(0)} s de décodage et de chargement du modèle)`);
+        + `(dont modèle ${fmt(modelMs / 1000)}, audio ${fmt(sepSec - modelMs / 1000)}) `
+        + `+ ${loadSec.toFixed(0)} s de décodage et de chargement du modèle`);
     } catch (e) {
       crumb({ phase: 'fini' });
       setStatus('Échec');

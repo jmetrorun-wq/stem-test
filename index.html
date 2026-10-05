@@ -47,6 +47,9 @@
     <label><input type="radio" name="mode" value="webgpu" checked> carte graphique</label>
     <label><input type="radio" name="mode" value="wasm"> processeur (plus lent)</label>
   </div>
+  <label class="muted" style="display:block;margin-bottom:10px">
+    <input type="checkbox" id="short" checked> Seulement les 30 premières secondes
+  </label>
   <button id="go" disabled>Séparer</button>
 </div>
 
@@ -132,10 +135,11 @@ $('go').addEventListener('click', async () => {
     crumb({ phase: 'décodage' });
     let audio = await new OfflineAudioContext(2, 1, SAMPLE_RATE)
       .decodeAudioData(await $('file').files[0].arrayBuffer());
-    const duration = audio.duration;
     const channels = audio.numberOfChannels;
-    const left = toInt16(audio.getChannelData(0));
-    const right = channels > 1 ? toInt16(audio.getChannelData(1)) : left;
+    const keep = $('short').checked ? Math.min(audio.length, 30 * SAMPLE_RATE) : audio.length;
+    const duration = keep / SAMPLE_RATE;
+    const left = toInt16(audio.getChannelData(0).subarray(0, keep));
+    const right = channels > 1 ? toInt16(audio.getChannelData(1).subarray(0, keep)) : left;
     audio = null;
     log(`Morceau : ${fmt(duration)} (${channels} canal/aux)`);
 

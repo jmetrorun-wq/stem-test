@@ -39,6 +39,8 @@ export class Separator {
     this.provider = provider;
     this.sessions = [];
     this.pieces = [];
+    // Appelé avant chaque étape du calcul d'une tranche (diagnostic).
+    this.onStep = null;
   }
 
   // onPiece(i, total) est appelé avant chaque morceau : sert à savoir où
@@ -86,6 +88,7 @@ export class Separator {
       const piece = this.pieces[i];
       const feeds = {};
       for (const name of piece.inputs) feeds[name] = map.get(name);
+      this.onStep?.(i + 1, this.pieces.length);
       const out = await this.sessions[i].run(feeds);
       for (const [name, tensor] of Object.entries(out)) {
         if (!keep.has(name) && !this.lastUse.has(name)) tensor.dispose();

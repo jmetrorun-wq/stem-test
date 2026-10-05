@@ -42,6 +42,11 @@
     Une vidéo de ta photothèque devrait marcher aussi (sa bande-son est utilisée).<br>
     Les morceaux de l'app Musique / Apple Music ne sont pas accessibles depuis Safari.</p>
   <div style="height:10px"></div>
+  <div class="muted" style="margin-bottom:10px">
+    Calcul sur :
+    <label><input type="radio" name="mode" value="webgpu" checked> carte graphique</label>
+    <label><input type="radio" name="mode" value="wasm"> processeur (plus lent)</label>
+  </div>
   <button id="go" disabled>Séparer</button>
 </div>
 
@@ -86,7 +91,9 @@ try {
     $('previous').hidden = false;
     $('previous').innerHTML = `<span class="err">⚠️ L'essai précédent s'est interrompu</span><br>
       <span class="muted">Étape : ${prev.phase}${prev.done ? ` — ${prev.phase === 'séparation' ? 'tranche' : 'morceau du modèle'} ${prev.done}/${prev.total}` : ''}
-      ${prev.duration ? ` — morceau de ${fmt(prev.duration)}` : ''}</span>`;
+      ${prev.step ? ` (calcul en cours, étape ${prev.step}/${prev.steps})` : ''}
+      ${prev.duration ? ` — morceau de ${fmt(prev.duration)}` : ''}
+      ${prev.provider ? ` — calcul sur ${prev.provider === 'wasm' ? 'processeur' : 'carte graphique'}` : ''}</span>`;
   }
 } catch {}
 
@@ -99,7 +106,11 @@ if (!navigator.gpu) {
   $('gpu').innerHTML = hasGpu ? '<span class="ok">✓ WebGPU disponible</span>'
     : '<span class="err">WebGPU présent mais aucune carte graphique accessible.</span>';
 }
-$('file').addEventListener('change', () => { $('go').disabled = !hasGpu || !$('file').files.length; });
+const mode = () => document.querySelector('input[name=mode]:checked').value;
+const MODE_LABEL = { webgpu: 'carte graphique', wasm: 'processeur' };
+const refreshGo = () => { $('go').disabled = !$('file').files.length || (mode() === 'webgpu' && !hasGpu); };
+$('file').addEventListener('change', refreshGo);
+document.querySelectorAll('input[name=mode]').forEach((r) => r.addEventListener('change', refreshGo));
 
 let stems = null;
 
@@ -128,28 +139,32 @@ $('go').addEventListener('click', async () => {
     audio = null;
     log(`Morceau : ${fmt(duration)} (${channels} canal/aux)`);
 
-    crumb({ phase: 'chargement du modèle', duration });
-    const sep = new Separator(ort);
+    const provider = mode();
+    crumb({ phase: 'chargement du modèle', duration, provider });
+    const sep = new Separator(ort, provider);
     await sep.load((msg) => { $('status').textContent = msg; },
-      (piece, pieces) => crumb({ phase: 'chargement du modèle', done: piece, total: pieces, duration }));
+      (piece, pieces) => crumb({ phase: 'chargement du modèle', done: piece, total: pieces, duration, provider }));
     const loadSec = (performance.now() - t0) / 1000;
     log(`Décodage + modèle : ${loadSec.toFixed(1)} s`);
 
     const tSep = performance.now();
     $('status').textContent = 'Séparation en cours…';
+    let segment = 1, segments = '?';
+    sep.onStep = (step, steps) => crumb({ phase: 'séparation', done: segment, total: segments, step, steps, duration, provider });
     stems = await sep.separate(left, right, ({ done, total, segmentMs }) => {
       $('bar').value = done / total;
       const elapsed = (performance.now() - tSep) / 1000;
       const eta = elapsed / done * (total - done);
       $('detail').textContent = `Tranche ${done}/${total} — ${(segmentMs / 1000).toFixed(1)} s la tranche — reste ~${fmt(eta)}`;
-      crumb({ phase: 'séparation', done, total, duration });
+      segment = done + 1;
+      segments = total;
     });
     const sepSec = (performance.now() - tSep) / 1000;
     log(`Séparation : ${sepSec.toFixed(1)} s pour ${duration.toFixed(0)} s de musique`);
     crumb({ phase: 'fini' });
 
     $('status').textContent = 'Terminé';
-    $('summary').innerHTML = `✓ Séparé en <b>${fmt(sepSec)}</b> pour un morceau de ${fmt(duration)}
+    $('summary').innerHTML = `✓ [${MODE_LABEL[provider]}] Séparé en <b>${fmt(sepSec)}</b> pour un morceau de ${fmt(duration)}
       (+ ${loadSec.toFixed(0)} s de décodage et de chargement du modèle)`;
     buildPlayer();
   } catch (e) {

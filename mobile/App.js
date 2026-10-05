@@ -12,6 +12,7 @@ import * as ort from 'onnxruntime-react-native';
 
 import { Separator, SAMPLE_RATE, TRACKS, toInt16 } from '../separator.js';
 import { MonolithRunner } from './monolithRunner.js';
+import { nativeDsp } from './nativeDsp.js';
 
 // Modèle réexporté avec l'attention par paquets (tools/export_htdemucs.py) :
 // ~1,3 Go au pic au lieu de 2,6-3,2 Go (l'app était tuée par iOS). Servi
@@ -108,7 +109,7 @@ export default function App() {
       });
       const loadSec = (Date.now() - t0) / 1000;
 
-      const sep = new Separator(runner);
+      const sep = new Separator(runner, nativeDsp);
       let segment = 1, segments = '?', modelMs = 0;
       sep.onStep = (step) => crumb({ phase: 'séparation', done: segment, total: segments, step, mode, duration });
       setStatus('Séparation en cours…');

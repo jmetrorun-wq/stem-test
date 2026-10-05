@@ -145,9 +145,27 @@ export class ChainRunner {
   }
 }
 
+// Pré/post-traitement en JavaScript (navigateur). L'app iPhone fournit
+// l'équivalent natif (mobile/nativeDsp.js, Accelerate) : en JS, Hermes
+// passait ~33 s par tranche sur ces FFT.
+export const jsDsp = {
+  prepareInput,
+  // -> Float32Array de 8 lignes de SEG échantillons (piste * 2 + canal)
+  freqToTime(freq) {
+    const out = new Float32Array(8 * SEG);
+    for (let t = 0; t < 4; t++) {
+      const spec = freqToTimeDomain(freq, t);
+      out.set(spec.left, (t * 2) * SEG);
+      out.set(spec.right, (t * 2 + 1) * SEG);
+    }
+    return out;
+  },
+};
+
 export class Separator {
-  constructor(runner) {
+  constructor(runner, dsp = jsDsp) {
     this.runner = runner;
+    this.dsp = dsp;
     // Appelé avant chaque étape du calcul d'une tranche (diagnostic).
     this.onStep = null;
   }
@@ -182,21 +200,21 @@ export class Separator {
         segR[i] = right[start + i] / 32768;
       }
 
-      const { waveform, magSpec } = prepareInput(segL, segR);
+      const { waveform, magSpec } = this.dsp.prepareInput(segL, segR);
       const { freq, time } = await this.runner.run(waveform, magSpec, this.onStep);
       this.onStep?.('assemblage');
+      const freqTime = this.dsp.freqToTime(freq);
 
-      for (let t = 0; t < 4; t++) {
-        const spec = freqToTimeDomain(freq, t);
-        for (let c = 0; c < 2; c++) {
-          const timeOffset = (t * 2 + c) * SEG;
-          const freqPart = c === 0 ? spec.left : spec.right;
-          const row = acc[t * 2 + c];
-          for (let i = 0; i < segLen; i++) {
-            const w = Math.min(isFirst ? 1 : i / fade, isLast ? 1 : (segLen - i) / fade, 1);
-            row[i] += (time[timeOffset + i] + freqPart[i]) * w;
-            if (t === 0 && c === 0) wacc[i] += w;
-          }
+      const weights = new Float32Array(segLen);
+      for (let i = 0; i < segLen; i++) {
+        weights[i] = Math.min(isFirst ? 1 : i / fade, isLast ? 1 : (segLen - i) / fade, 1);
+        wacc[i] += weights[i];
+      }
+      for (let row = 0; row < 8; row++) {
+        const offset = row * SEG;
+        const accRow = acc[row];
+        for (let i = 0; i < segLen; i++) {
+          accRow[i] += (time[offset + i] + freqTime[offset + i]) * weights[i];
         }
       }
 
@@ -232,7 +250,7 @@ export function toInt16(samples) {
   return out;
 }
 
-function prepareInput(left, right) {
+export function prepareInput(left, right) {
   const le = Math.ceil(SEG / HOP);
   const pad = Math.floor(HOP / 2) * 3;
   const padRight = pad + le * HOP - SEG;
@@ -262,7 +280,7 @@ function prepareInput(left, right) {
 
 // Branche fréquentielle d'une piste -> signal temporel (iSTFT), même
 // convention de padding/décalage que demucs.
-function freqToTimeDomain(freq, track) {
+export function freqToTimeDomain(freq, track) {
   const plane = BINS * FRAMES;
   const base = track * 4 * plane;
   const paddedBins = BINS + 1;

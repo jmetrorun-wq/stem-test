@@ -19,7 +19,11 @@ import { MonolithRunner } from './monolithRunner.js';
 const MODEL_URL = 'http://10.10.0.44:8000/htdemucs_chunk128.onnx';
 
 const LABELS = { drums: 'Batterie', bass: 'Basse', other: 'Autres (guitare, piano…)', vocals: 'Voix' };
-const MODES = { cpu: 'processeur', coreml: 'Core ML (puce IA)' };
+const MODES = { cpu: 'processeur', coreml: 'Core ML', mlprogram: 'Core ML récent' };
+// Drapeaux Core ML d'onnxruntime : 8 = formes d'entrée statiques
+// uniquement, 16 = format ML Program (plus récent, fp16). Le mode
+// « coreml » (ancien format NeuralNetwork) plantait au chargement.
+const COREML_FLAGS = { coreml: 0, mlprogram: 8 | 16 };
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 const modelFile = new File(Paths.document, 'htdemucs_chunk128.onnx');
@@ -95,9 +99,9 @@ export default function App() {
       // du modèle (pic mesuré 2,4 Go avec, 1,3 Go sans, pour ~20 % de temps
       // de calcul en plus).
       await runner.load(modelFile.uri, {
-        executionProviders: mode === 'coreml'
-          ? [{ name: 'coreml' }, { name: 'cpu', useArena: false }]
-          : [{ name: 'cpu', useArena: false }],
+        executionProviders: mode === 'cpu'
+          ? [{ name: 'cpu', useArena: false }]
+          : [{ name: 'coreml', coreMlFlags: COREML_FLAGS[mode] }, { name: 'cpu', useArena: false }],
         graphOptimizationLevel: 'disabled',
         enableCpuMemArena: false,
         enableMemPattern: false,

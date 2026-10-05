@@ -19,24 +19,17 @@ const FRAMES = 336;
 const STRIDE = Math.floor(SEG * 0.75);
 
 const MODEL_BASE = 'https://huggingface.co/monteslu/htdemucs-web-onnx/resolve/main/';
-const CACHE_NAME = 'stem-test-model-v1';
 // Prologue de normalisation fragile en fp16 : à garder sur CPU sinon NaN
 // sur WebGPU (cf. README du modèle).
 const CPU_NODES = ['/ReduceMean', '/Sub', '/Pow', '/ReduceMean_1', '/Clip', '/Sqrt', '/Add', '/Div',
   '/ReduceMean_2', '/Sub_1', '/Pow_1', '/ReduceMean_3', '/Clip_1', '/Sqrt_1', '/Add_1', '/Div_1'];
 
-async function fetchCached(url) {
-  let cache = null;
-  try {
-    cache = await caches.open(CACHE_NAME);
-    const hit = await cache.match(url);
-    if (hit) return { bytes: new Uint8Array(await hit.arrayBuffer()), cached: true };
-  } catch { cache = null; }
+// Pas de Cache API : elle gardait une seconde copie de chaque morceau en
+// mémoire pendant le chargement. Le cache HTTP du navigateur suffit.
+async function fetchBytes(url) {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Téléchargement impossible (${resp.status}) : ${url}`);
-  const bytes = new Uint8Array(await resp.arrayBuffer());
-  try { await cache?.put(url, new Response(bytes)); } catch { /* quota : tant pis */ }
-  return { bytes, cached: false };
+  return new Uint8Array(await resp.arrayBuffer());
 }
 
 export class Separator {
@@ -48,9 +41,11 @@ export class Separator {
     this.pieces = [];
   }
 
-  async load(onStatus) {
+  // onPiece(i, total) est appelé avant chaque morceau : sert à savoir où
+  // le chargement s'est arrêté si Safari ferme la page.
+  async load(onStatus, onPiece = () => {}) {
     const manifest = JSON.parse(new TextDecoder().decode(
-      (await fetchCached(MODEL_BASE + 'htdemucs_split_manifest.json')).bytes));
+      await fetchBytes(MODEL_BASE + 'htdemucs_split_manifest.json')));
     this.pieces = manifest.pieces;
     this.freqName = manifest.outputs.freq;
     this.timeName = manifest.outputs.time;
@@ -62,14 +57,17 @@ export class Separator {
 
     let loadedBytes = 0;
     for (let i = 0; i < this.pieces.length; i++) {
-      const { bytes, cached } = await fetchCached(MODEL_BASE + this.pieces[i].file);
+      onPiece(i + 1, this.pieces.length);
+      const bytes = await fetchBytes(MODEL_BASE + this.pieces[i].file);
       loadedBytes += bytes.length;
-      onStatus(`Modèle : morceau ${i + 1}/${this.pieces.length} (${(loadedBytes / 1e6).toFixed(0)} Mo${cached ? ', depuis le cache' : ''})`);
+      onStatus(`Modèle : morceau ${i + 1}/${this.pieces.length} (${(loadedBytes / 1e6).toFixed(0)} Mo)`);
       const gpu = this.provider === 'webgpu';
       const ep = gpu && i === 0 ? { name: 'webgpu', forceCpuNodeNames: CPU_NODES } : this.provider;
       this.sessions.push(await this.ort.InferenceSession.create(bytes, {
         executionProviders: [ep],
         graphOptimizationLevel: 'all',
+        enableCpuMemArena: false,
+        enableMemPattern: false,
         ...(gpu ? { preferredOutputLocation: 'gpu-buffer' } : {}),
       }));
     }

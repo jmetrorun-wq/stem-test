@@ -27,7 +27,8 @@
 </head>
 <body>
 <h1>Test de séparation sur iPhone</h1>
-<p class="sub">Tout se calcule sur ce téléphone, rien n'est envoyé.</p>
+<p class="sub">Tout se calcule sur ce téléphone, rien n'est envoyé.
+  Ferme les autres onglets Safari avant de lancer : ils prennent de la mémoire.</p>
 
 <div class="card" id="previous" hidden></div>
 
@@ -84,7 +85,7 @@ try {
   if (prev && prev.phase !== 'fini') {
     $('previous').hidden = false;
     $('previous').innerHTML = `<span class="err">⚠️ L'essai précédent s'est interrompu</span><br>
-      <span class="muted">Étape : ${prev.phase}${prev.done ? ` — tranche ${prev.done}/${prev.total}` : ''}
+      <span class="muted">Étape : ${prev.phase}${prev.done ? ` — ${prev.phase === 'séparation' ? 'tranche' : 'morceau du modèle'} ${prev.done}/${prev.total}` : ''}
       ${prev.duration ? ` — morceau de ${fmt(prev.duration)}` : ''}</span>`;
   }
 } catch {}
@@ -112,20 +113,24 @@ $('go').addEventListener('click', async () => {
   const t0 = performance.now();
   const timer = setInterval(() => { $('clock').textContent = fmt((performance.now() - t0) / 1000); }, 250);
   try {
+    // Modèle d'abord, morceau ensuite : on évite d'avoir les ~100 Mo du
+    // morceau décodé en mémoire pendant le pic du chargement du modèle.
+    crumb({ phase: 'chargement du modèle' });
+    const sep = new Separator(ort);
+    await sep.load((msg) => { $('status').textContent = msg; },
+      (piece, pieces) => crumb({ phase: 'chargement du modèle', done: piece, total: pieces }));
+    const loadSec = (performance.now() - t0) / 1000;
+    log(`Modèle chargé en ${loadSec.toFixed(1)} s`);
+
     $('status').textContent = 'Décodage du fichier audio…';
     crumb({ phase: 'décodage' });
-    const audio = await new OfflineAudioContext(2, 1, SAMPLE_RATE)
-      .decodeAudioData(await $('file').files[0].arrayBuffer());
+    let fileBytes = await $('file').files[0].arrayBuffer();
+    const audio = await new OfflineAudioContext(2, 1, SAMPLE_RATE).decodeAudioData(fileBytes);
+    fileBytes = null;
     const left = audio.getChannelData(0);
     const right = audio.numberOfChannels > 1 ? audio.getChannelData(1) : left;
     const duration = audio.duration;
     log(`Morceau : ${fmt(duration)} (${audio.numberOfChannels} canal/aux)`);
-
-    crumb({ phase: 'chargement du modèle', duration });
-    const sep = new Separator(ort);
-    await sep.load((msg) => { $('status').textContent = msg; });
-    const loadSec = (performance.now() - t0) / 1000;
-    log(`Modèle chargé en ${loadSec.toFixed(1)} s`);
 
     const tSep = performance.now();
     $('status').textContent = 'Séparation en cours…';

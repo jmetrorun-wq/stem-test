@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test séparation iPhone</title>
+<style>
+  :root { --bg: #14161c; --card: #1f232c; --text: #eef0f4; --muted: #9aa3b2; --accent: #f2b8a3; --ok: #a3c9a8; --err: #f28b8b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font: 16px/1.45 -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 16px; font-size: .9rem; }
+  .card { background: var(--card); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 12px 16px; background: var(--accent); color: #1a1a1a; font-weight: 600; width: 100%; }
+  button:disabled { opacity: .4; }
+  input[type=file] { width: 100%; color: var(--muted); }
+  .big { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .err { color: var(--err); white-space: pre-wrap; font-size: .85rem; }
+  .ok { color: var(--ok); }
+  progress { width: 100%; height: 10px; }
+  .stems { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+  .stem { background: #2a2f3a; color: var(--text); font-weight: 500; }
+  .stem.off { background: #2a2f3a; opacity: .35; text-decoration: line-through; }
+  #log { font: 12px/1.4 ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; max-height: 180px; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>Test de séparation sur iPhone</h1>
+<p class="sub">Tout se calcule sur ce téléphone, rien n'est envoyé.</p>
+
+<div class="card" id="previous" hidden></div>
+
+<div class="card">
+  <div class="muted" id="gpu">Vérification de WebGPU…</div>
+</div>
+
+<div class="card">
+  <input type="file" id="file" accept="audio/*">
+  <div style="height:10px"></div>
+  <button id="go" disabled>Séparer</button>
+</div>
+
+<div class="card" id="run" hidden>
+  <div class="muted" id="status"></div>
+  <progress id="bar" max="1" value="0"></progress>
+  <div class="big" id="clock">0:00</div>
+  <div class="muted" id="detail"></div>
+</div>
+
+<div class="card" id="player" hidden>
+  <div class="ok" id="summary"></div>
+  <div class="stems" id="stems"></div>
+  <button id="play">▶︎ Écouter</button>
+</div>
+
+<div class="card"><div class="err" id="error"></div><div id="log"></div></div>
+
+<script type="module">
+import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.webgpu.min.mjs';
+import { Separator, SAMPLE_RATE, TRACKS } from './separator.js';
+
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
+ort.env.wasm.numThreads = 1;
+
+const $ = (id) => document.getElementById(id);
+const LABELS = { drums: 'Batterie', bass: 'Basse', other: 'Autres (guitare, piano…)', vocals: 'Voix' };
+const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+const log = (msg) => { $('log').textContent += msg + '\n'; };
+const showError = (msg) => { $('error').textContent = msg; };
+window.addEventListener('error', (e) => showError('Erreur : ' + e.message));
+window.addEventListener('unhandledrejection', (e) => showError('Erreur : ' + (e.reason?.message || e.reason)));
+
+// Si Safari tue l'onglet (mémoire), la page se recharge : on garde une
+// trace de l'avancement pour savoir où ça a lâché.
+const CRUMB = 'stem-test-crumb';
+const crumb = (data) => { try { localStorage.setItem(CRUMB, JSON.stringify({ ...data, at: Date.now() })); } catch {} };
+try {
+  const prev = JSON.parse(localStorage.getItem(CRUMB) || 'null');
+  if (prev && prev.phase !== 'fini') {
+    $('previous').hidden = false;
+    $('previous').innerHTML = `<span class="err">⚠️ L'essai précédent s'est interrompu</span><br>
+      <span class="muted">Étape : ${prev.phase}${prev.done ? ` — tranche ${prev.done}/${prev.total}` : ''}
+      ${prev.duration ? ` — morceau de ${fmt(prev.duration)}` : ''}</span>`;
+  }
+} catch {}
+
+let hasGpu = false;
+if (!navigator.gpu) {
+  $('gpu').innerHTML = '<span class="err">WebGPU indisponible sur ce navigateur : il faut Safari sur iOS 26 ou plus récent.</span>';
+} else {
+  const adapter = await navigator.gpu.requestAdapter().catch(() => null);
+  hasGpu = !!adapter;
+  $('gpu').innerHTML = hasGpu ? '<span class="ok">✓ WebGPU disponible</span>'
+    : '<span class="err">WebGPU présent mais aucune carte graphique accessible.</span>';
+}
+$('file').addEventListener('change', () => { $('go').disabled = !hasGpu || !$('file').files.length; });
+
+let stems = null;
+
+$('go').addEventListener('click', async () => {
+  $('go').disabled = true;
+  $('run').hidden = false;
+  $('player').hidden = true;
+  showError('');
+  stems = null;
+
+  const t0 = performance.now();
+  const timer = setInterval(() => { $('clock').textContent = fmt((performance.now() - t0) / 1000); }, 250);
+  try {
+    $('status').textContent = 'Décodage du fichier audio…';
+    crumb({ phase: 'décodage' });
+    const audio = await new OfflineAudioContext(2, 1, SAMPLE_RATE)
+      .decodeAudioData(await $('file').files[0].arrayBuffer());
+    const left = audio.getChannelData(0);
+    const right = audio.numberOfChannels > 1 ? audio.getChannelData(1) : left;
+    const duration = audio.duration;
+    log(`Morceau : ${fmt(duration)} (${audio.numberOfChannels} canal/aux)`);
+
+    crumb({ phase: 'chargement du modèle', duration });
+    const sep = new Separator(ort);
+    await sep.load((msg) => { $('status').textContent = msg; });
+    const loadSec = (performance.now() - t0) / 1000;
+    log(`Modèle chargé en ${loadSec.toFixed(1)} s`);
+
+    const tSep = performance.now();
+    $('status').textContent = 'Séparation en cours…';
+    stems = await sep.separate(left, right, ({ done, total, segmentMs }) => {
+      $('bar').value = done / total;
+      const elapsed = (performance.now() - tSep) / 1000;
+      const eta = elapsed / done * (total - done);
+      $('detail').textContent = `Tranche ${done}/${total} — ${(segmentMs / 1000).toFixed(1)} s la tranche — reste ~${fmt(eta)}`;
+      crumb({ phase: 'séparation', done, total, duration });
+    });
+    const sepSec = (performance.now() - tSep) / 1000;
+    log(`Séparation : ${sepSec.toFixed(1)} s pour ${duration.toFixed(0)} s de musique`);
+    crumb({ phase: 'fini' });
+
+    $('status').textContent = 'Terminé';
+    $('summary').innerHTML = `✓ Séparé en <b>${fmt(sepSec)}</b> pour un morceau de ${fmt(duration)}
+      (+ ${loadSec.toFixed(0)} s de chargement du modèle)`;
+    buildPlayer();
+  } catch (e) {
+    crumb({ phase: 'fini' });
+    showError('Échec : ' + (e?.message || e));
+    $('status').textContent = 'Échec';
+  } finally {
+    clearInterval(timer);
+    $('go').disabled = false;
+  }
+});
+
+// Lecteur : mixe à la volée les pistes Int16 actives (pas de copie float32
+// de tout le morceau, pour rester léger en mémoire).
+const enabled = Object.fromEntries(TRACKS.map((t) => [t, true]));
+let ctx = null, node = null, pos = 0;
+
+function buildPlayer() {
+  $('player').hidden = false;
+  $('stems').innerHTML = '';
+  for (const t of TRACKS) {
+    const b = document.createElement('button');
+    b.className = 'stem' + (enabled[t] ? '' : ' off');
+    b.textContent = LABELS[t];
+    b.onclick = () => { enabled[t] = !enabled[t]; b.classList.toggle('off', !enabled[t]); };
+    $('stems').appendChild(b);
+  }
+  pos = 0;
+}
+
+$('play').addEventListener('click', () => {
+  if (!stems) return;
+  if (node) { node.disconnect(); node = null; $('play').textContent = '▶︎ Écouter'; return; }
+  ctx ??= new AudioContext({ sampleRate: SAMPLE_RATE });
+  ctx.resume();
+  const length = stems.vocals.left.length;
+  node = ctx.createScriptProcessor(4096, 0, 2);
+  node.onaudioprocess = (e) => {
+    const outL = e.outputBuffer.getChannelData(0);
+    const outR = e.outputBuffer.getChannelData(1);
+    const active = TRACKS.filter((t) => enabled[t]).map((t) => stems[t]);
+    for (let i = 0; i < outL.length; i++, pos++) {
+      let l = 0, r = 0;
+      if (pos < length) for (const s of active) { l += s.left[pos]; r += s.right[pos]; }
+      outL[i] = l / 32768;
+      outR[i] = r / 32768;
+    }
+    if (pos >= length) pos = 0;
+  };
+  node.connect(ctx.destination);
+  $('play').textContent = '⏸ Pause';
+});
+</script>
+</body>
+</html>

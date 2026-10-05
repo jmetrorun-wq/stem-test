@@ -1,7 +1,8 @@
-// STFT / iSTFT de htdemucs avec Accelerate (vDSP), équivalents exacts de
-// prepareInput / freqToTimeDomain de separator.js. En JavaScript (Hermes,
-// sans JIT), ces ~3 400 FFT de 4096 points prenaient ~33 s par tranche sur
-// iPhone 13, contre ~5 s pour le modèle lui-même.
+// Traitement d'une tranche hors modèle pour htdemucs, équivalent natif de
+// jsDsp (separator.js) : STFT / iSTFT avec Accelerate (vDSP), assemblage
+// par fondu et conversion Int16. En JavaScript (Hermes, sans JIT), les FFT
+// prenaient ~33 s par tranche sur iPhone 13, puis les boucles restantes
+// ~6 s, contre ~4-5 s pour le modèle lui-même.
 //
 // Volontairement sans dépendance à ExpoModulesCore : testable sur Mac avec
 // swiftc (cf. tools/test_stem_dsp.sh).
@@ -15,6 +16,7 @@ public final class StemDsp {
   public static let segment = 343980
   public static let bins = 2048
   public static let frames = 336
+  public static let stride = Int(Double(segment) * 0.75)
 
   // Trames STFT avec padding demucs : 336 utiles + 2 vides de chaque côté.
   private static let paddedFrames = frames + 4
@@ -27,6 +29,8 @@ public final class StemDsp {
   private let windowSum: [Float]
   private let forward: vDSP_DFT_Setup
   private let inverse: vDSP_DFT_Setup
+  // Sortie de freqToTime réutilisée d'une tranche à l'autre (8 x segment).
+  private lazy var freqTimeScratch = [Float](repeating: 0, count: 8 * StemDsp.segment)
 
   private init() {
     let n = StemDsp.fftSize
@@ -132,5 +136,62 @@ public final class StemDsp {
         }
       }
     }
+  }
+
+  /// Équivalent de jsDsp.segmentInput : extrait [start, start + segLen) des
+  /// pistes Int16, remplit waveform (2 x segment, complété de zéros) et
+  /// magOut (cf. prepareInput).
+  public func segmentInput(left: UnsafePointer<Int16>, right: UnsafePointer<Int16>, start: Int, segLen: Int,
+                           waveform: UnsafeMutablePointer<Float>, magOut: UnsafeMutablePointer<Float>) {
+    let seg = StemDsp.segment
+    waveform.initialize(repeating: 0, count: 2 * seg)
+    for i in 0..<segLen {
+      waveform[i] = Float(left[start + i]) / 32768
+      waveform[seg + i] = Float(right[start + i]) / 32768
+    }
+    prepareInput(left: waveform, right: waveform + seg, out: magOut)
+  }
+
+  /// Équivalent de jsDsp.accumulate : ajoute (branche temps + iSTFT de la
+  /// branche fréquence) x poids de fondu à acc (8 x segment), poids à wacc.
+  public func accumulate(freq: UnsafePointer<Float>, time: UnsafePointer<Float>,
+                         acc: UnsafeMutablePointer<Float>, wacc: UnsafeMutablePointer<Float>,
+                         segLen: Int, isFirst: Bool, isLast: Bool) {
+    let seg = StemDsp.segment
+    let fade = Double(StemDsp.stride) * 0.5
+    var weights = [Float](repeating: 0, count: segLen)
+    for i in 0..<segLen {
+      weights[i] = Float(min(isFirst ? 1 : Double(i) / fade, isLast ? 1 : Double(segLen - i) / fade, 1))
+      wacc[i] += weights[i]
+    }
+    freqTimeScratch.withUnsafeMutableBufferPointer { scratch in
+      freqToTime(freq: freq, out: scratch.baseAddress!)
+      for row in 0..<8 {
+        let offset = row * seg
+        for i in 0..<segLen {
+          acc[offset + i] += (time[offset + i] + scratch[offset + i]) * weights[i]
+        }
+      }
+    }
+  }
+
+  /// Équivalent de jsDsp.flush : écrit les finalLen premiers échantillons
+  /// normalisés en Int16 (8 lignes de finalLen) puis décale acc et wacc
+  /// de `stride` pour la tranche suivante.
+  public func flush(acc: UnsafeMutablePointer<Float>, wacc: UnsafeMutablePointer<Float>,
+                    finalLen: Int, out: UnsafeMutablePointer<Int16>) {
+    let seg = StemDsp.segment, stride = StemDsp.stride
+    for row in 0..<8 {
+      let offset = row * seg
+      for i in 0..<finalLen {
+        let v = wacc[i] > 1e-8 ? acc[offset + i] / wacc[i] : 0
+        out[row * finalLen + i] = Int16(max(-32768, min(32767, (v * 32767 + 0.5).rounded(.down))))
+      }
+      // Zones qui se chevauchent : memmove plutôt que update(from:).
+      memmove(acc + offset, acc + offset + stride, (seg - stride) * MemoryLayout<Float>.stride)
+      (acc + offset + seg - stride).update(repeating: 0, count: stride)
+    }
+    memmove(wacc, wacc + stride, (seg - stride) * MemoryLayout<Float>.stride)
+    (wacc + seg - stride).update(repeating: 0, count: stride)
   }
 }

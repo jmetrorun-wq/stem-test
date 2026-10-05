@@ -1,6 +1,6 @@
 // Équivalent natif (Accelerate, module local modules/stem-dsp) de jsDsp
-// (separator.js) : mêmes entrées/sorties, ~15x plus rapide que le JS sur Mac
-// et bien davantage face à Hermes sur iPhone.
+// (separator.js) : même interface et mêmes résultats (à 1 pas Int16 près),
+// ~13x plus rapide que le JS sous Node et bien davantage face à Hermes.
 import StemDsp from './modules/stem-dsp';
 import { MODEL_SHAPES } from '../separator.js';
 
@@ -8,17 +8,18 @@ const SEG = MODEL_SHAPES.waveform[2];
 const SPEC = MODEL_SHAPES.magSpec.reduce((a, b) => a * b, 1);
 
 export const nativeDsp = {
-  prepareInput(left, right) {
-    const magSpec = new Float32Array(SPEC);
-    StemDsp.prepareInput(left, right, magSpec);
+  segmentInput(left, right, start, segLen) {
     const waveform = new Float32Array(2 * SEG);
-    waveform.set(left, 0);
-    waveform.set(right, SEG);
+    const magSpec = new Float32Array(SPEC);
+    StemDsp.segmentInput(left, right, start, segLen, waveform, magSpec);
     return { waveform, magSpec };
   },
-  freqToTime(freq) {
-    const out = new Float32Array(8 * SEG);
-    StemDsp.freqToTime(freq, out);
+  accumulate(freq, time, acc, wacc, segLen, isFirst, isLast) {
+    StemDsp.accumulate(freq, time, acc, wacc, segLen, isFirst, isLast);
+  },
+  flush(acc, wacc, finalLen) {
+    const out = new Int16Array(8 * finalLen);
+    StemDsp.flush(acc, wacc, finalLen, out);
     return out;
   },
 };

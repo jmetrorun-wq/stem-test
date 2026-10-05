@@ -19,6 +19,7 @@ const BINS = 2048;
 const FRAMES = 336;
 const STRIDE = Math.floor(SEG * 0.75);
 export const MODEL_SHAPES = { waveform: [1, 2, SEG], magSpec: [1, 4, BINS, FRAMES] };
+export const SEGMENT_STRIDE = STRIDE;
 
 const MODEL_BASE = 'https://huggingface.co/monteslu/htdemucs-web-onnx/resolve/main/';
 // Prologue de normalisation fragile en fp16 : à garder sur CPU sinon NaN
@@ -145,19 +146,59 @@ export class ChainRunner {
   }
 }
 
-// Pré/post-traitement en JavaScript (navigateur). L'app iPhone fournit
-// l'équivalent natif (mobile/nativeDsp.js, Accelerate) : en JS, Hermes
-// passait ~33 s par tranche sur ces FFT.
+// Traitement d'une tranche hors modèle, en JavaScript (navigateur) :
+// entrée (Int16 -> float32 + STFT), assemblage par fondu (iSTFT + somme
+// pondérée), sortie (normalisation + Int16). L'app iPhone fournit
+// l'équivalent natif (mobile/nativeDsp.js, Accelerate) : sous Hermes, ces
+// boucles prenaient ~33 s par tranche (FFT) puis ~6 s (boucles restantes).
+//
+// acc : Float32Array(8 * SEG), 8 lignes (piste * 2 + canal) alignées sur
+// le début de la tranche en cours ; wacc : somme des poids de fondu.
 export const jsDsp = {
-  prepareInput,
-  // -> Float32Array de 8 lignes de SEG échantillons (piste * 2 + canal)
-  freqToTime(freq) {
-    const out = new Float32Array(8 * SEG);
+  segmentInput(left, right, start, segLen) {
+    const segL = new Float32Array(SEG);
+    const segR = new Float32Array(SEG);
+    for (let i = 0; i < segLen; i++) {
+      segL[i] = left[start + i] / 32768;
+      segR[i] = right[start + i] / 32768;
+    }
+    return prepareInput(segL, segR);
+  },
+
+  accumulate(freq, time, acc, wacc, segLen, isFirst, isLast) {
+    const fade = STRIDE * 0.5;
+    const weights = new Float32Array(segLen);
+    for (let i = 0; i < segLen; i++) {
+      weights[i] = Math.min(isFirst ? 1 : i / fade, isLast ? 1 : (segLen - i) / fade, 1);
+      wacc[i] += weights[i];
+    }
     for (let t = 0; t < 4; t++) {
       const spec = freqToTimeDomain(freq, t);
-      out.set(spec.left, (t * 2) * SEG);
-      out.set(spec.right, (t * 2 + 1) * SEG);
+      for (let c = 0; c < 2; c++) {
+        const offset = (t * 2 + c) * SEG;
+        const freqPart = c === 0 ? spec.left : spec.right;
+        for (let i = 0; i < segLen; i++) {
+          acc[offset + i] += (time[offset + i] + freqPart[i]) * weights[i];
+        }
+      }
     }
+  },
+
+  // Fige les finalLen premiers échantillons (Int16, 8 lignes de finalLen)
+  // puis décale acc/wacc de STRIDE pour la tranche suivante.
+  flush(acc, wacc, finalLen) {
+    const out = new Int16Array(8 * finalLen);
+    for (let row = 0; row < 8; row++) {
+      const offset = row * SEG;
+      for (let i = 0; i < finalLen; i++) {
+        const v = wacc[i] > 1e-8 ? acc[offset + i] / wacc[i] : 0;
+        out[row * finalLen + i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+      }
+      acc.copyWithin(offset, offset + STRIDE, offset + SEG);
+      acc.fill(0, offset + SEG - STRIDE, offset + SEG);
+    }
+    wacc.copyWithin(0, STRIDE);
+    wacc.fill(0, SEG - STRIDE);
     return out;
   },
 };
@@ -180,11 +221,8 @@ export class Separator {
     const numSegments = total <= SEG ? 1 : Math.ceil((total - SEG) / STRIDE) + 1;
     const out = TRACKS.map(() => ({ left: new Int16Array(total), right: new Int16Array(total) }));
 
-    // Accumulateur aligné sur le début de la tranche en cours :
-    // 4 pistes x 2 canaux, + somme des poids de fondu.
-    const acc = Array.from({ length: 8 }, () => new Float32Array(SEG));
+    const acc = new Float32Array(8 * SEG);
     const wacc = new Float32Array(SEG);
-    const fade = STRIDE * 0.5;
 
     for (let s = 0; s < numSegments; s++) {
       const t0 = performance.now();
@@ -193,48 +231,18 @@ export class Separator {
       const isFirst = s === 0;
       const isLast = s === numSegments - 1;
 
-      const segL = new Float32Array(SEG);
-      const segR = new Float32Array(SEG);
-      for (let i = 0; i < segLen; i++) {
-        segL[i] = left[start + i] / 32768;
-        segR[i] = right[start + i] / 32768;
-      }
-
-      const { waveform, magSpec } = this.dsp.prepareInput(segL, segR);
+      const { waveform, magSpec } = this.dsp.segmentInput(left, right, start, segLen);
       const { freq, time } = await this.runner.run(waveform, magSpec, this.onStep);
       this.onStep?.('assemblage');
-      const freqTime = this.dsp.freqToTime(freq);
+      this.dsp.accumulate(freq, time, acc, wacc, segLen, isFirst, isLast);
 
-      const weights = new Float32Array(segLen);
-      for (let i = 0; i < segLen; i++) {
-        weights[i] = Math.min(isFirst ? 1 : i / fade, isLast ? 1 : (segLen - i) / fade, 1);
-        wacc[i] += weights[i];
-      }
-      for (let row = 0; row < 8; row++) {
-        const offset = row * SEG;
-        const accRow = acc[row];
-        for (let i = 0; i < segLen; i++) {
-          accRow[i] += (time[offset + i] + freqTime[offset + i]) * weights[i];
-        }
-      }
-
-      // La zone [start, start + STRIDE) ne recevra plus rien : on la fige
-      // en Int16 puis on décale l'accumulateur pour la tranche suivante.
+      // La zone [start, start + STRIDE) ne recevra plus rien : on la fige.
       const finalLen = isLast ? segLen : STRIDE;
+      const block = this.dsp.flush(acc, wacc, finalLen);
       for (let t = 0; t < 4; t++) {
-        for (let c = 0; c < 2; c++) {
-          const row = acc[t * 2 + c];
-          const dst = c === 0 ? out[t].left : out[t].right;
-          for (let i = 0; i < finalLen; i++) {
-            const v = wacc[i] > 1e-8 ? row[i] / wacc[i] : 0;
-            dst[start + i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
-          }
-          row.copyWithin(0, STRIDE);
-          row.fill(0, SEG - STRIDE);
-        }
+        out[t].left.set(block.subarray((t * 2) * finalLen, (t * 2 + 1) * finalLen), start);
+        out[t].right.set(block.subarray((t * 2 + 1) * finalLen, (t * 2 + 2) * finalLen), start);
       }
-      wacc.copyWithin(0, STRIDE);
-      wacc.fill(0, SEG - STRIDE);
 
       onProgress({ done: s + 1, total: numSegments, segmentMs: performance.now() - t0 });
     }

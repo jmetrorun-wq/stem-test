@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AudioContext, decodeAudioData } from 'react-native-audio-api';
+import { File, Paths } from 'expo-file-system';
 
 import { SAMPLE_RATE, TRACKS } from '../separator.js';
 import { chordColor } from '../chords.js';
@@ -13,6 +14,14 @@ import { stemUri, updateSong } from './library.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
 
 const CHIP = 76; // largeur d'une case d'accord (+ marge)
+
+// Décalage d'affichage des accords réglé par l'utilisateur (secondes,
+// positif = accords affichés plus tôt), mémorisé pour tous les morceaux :
+// sert à compenser la latence de sortie audio (écouteurs Bluetooth :
+// 150-250 ms) et à mesurer le décalage réel de la détection.
+const settingsFile = new File(Paths.document, 'settings.json');
+const readSettings = () => { try { return settingsFile.exists ? JSON.parse(settingsFile.textSync()) : {}; } catch { return {}; } };
+const writeSettings = (patch) => { try { settingsFile.write(JSON.stringify({ ...readSettings(), ...patch })); } catch {} };
 
 export default function Player({ song, onBack }) {
   const [ready, setReady] = useState(false);
@@ -23,6 +32,12 @@ export default function Player({ song, onBack }) {
   const [enabled, setEnabled] = useState(() => Object.fromEntries(TRACKS.map((t) => [t, t !== muted])));
   const audio = useRef({ ctx: null, buffers: {}, gains: {}, sources: [], startedAt: 0, offset: 0 });
   const bar = useRef(null);
+  const [shift, setShift] = useState(() => readSettings().chordShift ?? 0);
+  const changeShift = (delta) => {
+    const next = Math.round((shift + delta) * 10) / 10;
+    setShift(next);
+    writeSettings({ chordShift: next });
+  };
 
   // Barre des accords : seulement les vrais accords (pas les silences).
   const chords = song.chords.filter((c) => c.chord !== 'N');
@@ -64,9 +79,10 @@ export default function Player({ song, onBack }) {
     return () => clearInterval(id);
   }, [playing]);
 
-  const current = chords.findIndex((c) => c.time <= position && position < c.end);
+  const chordPos = position + shift;
+  const current = chords.findIndex((c) => c.time <= chordPos && chordPos < c.end);
   const nowChord = current >= 0 ? chords[current].chord : null;
-  const nextChord = current >= 0 ? chords[current + 1]?.chord : chords.find((c) => c.time > position)?.chord;
+  const nextChord = current >= 0 ? chords[current + 1]?.chord : chords.find((c) => c.time > chordPos)?.chord;
 
   // Garde l'accord en cours au centre de la barre.
   useEffect(() => {
@@ -145,6 +161,15 @@ export default function Player({ song, onBack }) {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.label}>Décalage des accords : {shift > 0 ? '+' : ''}{shift.toFixed(1)} s</Text>
+            <View style={styles.controls}>
+              <TouchableOpacity style={styles.round} onPress={() => changeShift(0.1)}><Text style={styles.roundText}>◀ Plus tôt</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.round} onPress={() => changeShift(-0.1)}><Text style={styles.roundText}>Plus tard ▶</Text></TouchableOpacity>
+            </View>
+            <Text style={styles.muted}>Si les accords changent après la musique, appuie sur « Plus tôt » ; s'ils changent avant, sur « Plus tard ».</Text>
           </View>
 
           <View style={styles.card}>

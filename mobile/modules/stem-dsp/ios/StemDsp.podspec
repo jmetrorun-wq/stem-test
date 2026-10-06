@@ -13,8 +13,14 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
   s.frameworks = 'Accelerate'
 
+  # Optimisé même dans les builds Debug (profil EAS development) : sans
+  # optimisation, ces boucles Swift sont >100x plus lentes (9 s par tranche
+  # au lieu de 76 ms, mesuré sur Mac), ce qui annulait le gain sur iPhone.
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
+    'SWIFT_OPTIMIZATION_LEVEL' => '-O',
+    'SWIFT_COMPILATION_MODE' => 'wholemodule',
+    'GCC_OPTIMIZATION_LEVEL' => '3',
   }
 
   s.source_files = '**/*.{h,m,mm,swift}'

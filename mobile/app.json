@@ -20,7 +20,7 @@
     "android": {
       "package": "fr.stemtest.app",
       "adaptiveIcon": {
-        "backgroundColor": "#14161c",
+        "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -36,12 +36,22 @@
         {
           "iosBackgroundMode": false
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 280,
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
+        }
       ]
     ],
     "extra": {
       "eas": {
         "projectId": "08634fde-de89-4457-92e0-b7cc9915a5be"
       }
-    }
+    },
+    "backgroundColor": "#000000"
   }
 }

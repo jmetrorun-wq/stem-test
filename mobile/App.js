@@ -2,7 +2,7 @@
 // (onnxruntime-react-native), là où Safari fermait la page faute de mémoire.
 
 import { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
@@ -233,6 +233,7 @@ export default function App() {
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <StatusBar style="light" />
+      <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
       <Text style={styles.h1}>Test de séparation (app native)</Text>
       <Text style={styles.muted}>Tout se calcule sur ce téléphone, rien n'est envoyé.</Text>
 
@@ -307,11 +308,12 @@ export default function App() {
   );
 }
 
-const C = { bg: '#14161c', card: '#1f232c', text: '#eef0f4', muted: '#9aa3b2', accent: '#f2b8a3', ok: '#a3c9a8', err: '#f28b8b', chip: '#2a2f3a' };
+const C = { bg: '#000000', card: '#1f232c', text: '#eef0f4', muted: '#9aa3b2', accent: '#f2b8a3', ok: '#a3c9a8', err: '#f28b8b', chip: '#2a2f3a' };
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: C.bg },
   content: { padding: 16, paddingTop: 64, gap: 12 },
+  logo: { width: '70%', height: 200, alignSelf: 'center' },
   h1: { color: C.text, fontSize: 22, fontWeight: '700' },
   muted: { color: C.muted, fontSize: 14, lineHeight: 20 },
   label: { color: C.text, fontSize: 15, flex: 1 },

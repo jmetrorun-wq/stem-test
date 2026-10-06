@@ -1,13 +1,11 @@
-// Exécute le modèle htdemucs fp32 d'un seul bloc (timcsy/demucs-web-onnx,
-// 172 Mo) sur une tranche. En natif, l'app a assez de mémoire pour le
+// Exécute le modèle htdemucs fp32 d'un seul bloc sur une tranche (export
+// d'origine : timcsy/demucs-web-onnx ; l'app utilise la version réexportée
+// par tools/export_htdemucs.py, mêmes entrées/sorties). En natif, l'app a assez de mémoire pour le
 // modèle entier, et le processeur calcule plus vite en fp32 qu'en fp16.
 // Indépendant de la plateforme : reçoit le module onnxruntime à utiliser
 // (onnxruntime-react-native dans l'app, onnxruntime-web pour les tests Node).
 
 import { MODEL_SHAPES } from '../separator.js';
-
-export const MONOLITH_URL =
-  'https://huggingface.co/timcsy/demucs-web-onnx/resolve/main/htdemucs_embedded.onnx';
 
 export class MonolithRunner {
   constructor(ort) {

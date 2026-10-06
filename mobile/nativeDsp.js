@@ -35,3 +35,8 @@ export function deepChroma(left, right) {
   StemDsp.deepChroma(left, right, out);
   return out;
 }
+
+// Enregistre une piste séparée en AAC (.m4a, ~7x plus léger que le WAV).
+export function saveStem(uri, left, right) {
+  StemDsp.saveStem(uri, left, right);
+}

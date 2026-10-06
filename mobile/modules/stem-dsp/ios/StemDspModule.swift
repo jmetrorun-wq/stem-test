@@ -67,6 +67,19 @@ public class StemDspModule: Module {
       for i in 0..<chroma.count { dst[i] = chroma[i] }
     }
 
+    // Enregistre une piste (Int16 stéréo) en AAC .m4a (cf. StemAudio).
+    Function("saveStem") { (uri: String, left: Int16Array, right: Int16Array) in
+      guard left.length == right.length, left.length > 0 else {
+        throw Exception(name: "BadLength", description: "saveStem : tailles de tableaux inattendues")
+      }
+      let url = URL(string: uri).flatMap { $0.isFileURL ? $0 : nil } ?? URL(fileURLWithPath: uri)
+      try StemAudio.writeAAC(
+        url: url,
+        left: left.rawPointer.assumingMemoryBound(to: Int16.self),
+        right: right.rawPointer.assumingMemoryBound(to: Int16.self),
+        count: left.length)
+    }
+
     Function("flush") { (acc: Float32Array, wacc: Float32Array, finalLen: Int, out: Int16Array) in
       guard acc.length == 8 * StemDsp.segment, wacc.length == StemDsp.segment,
             finalLen > 0, finalLen <= StemDsp.segment, out.length == 8 * finalLen else {

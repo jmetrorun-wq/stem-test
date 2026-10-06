@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'Accelerate'
+  s.frameworks = 'Accelerate', 'AVFoundation'
 
   # Optimisé même dans les builds Debug (profil EAS development) : sans
   # optimisation, ces boucles Swift sont >100x plus lentes (9 s par tranche

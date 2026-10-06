@@ -6,6 +6,9 @@ import ExpoModulesCore
 // de 100 ms par tranche sur Mac).
 public class StemDspModule: Module {
   private static let specLength = 4 * StemDsp.bins * StemDsp.frames
+  // Chroma profond (accords), chargé une fois depuis le fichier de poids
+  // téléchargé par l'app (deep_chroma.bin, cf. tools/chroma).
+  private var deepChroma: DeepChroma?
 
   public func definition() -> ModuleDefinition {
     Name("StemDsp")
@@ -38,6 +41,30 @@ public class StemDspModule: Module {
         acc: acc.rawPointer.assumingMemoryBound(to: Float.self),
         wacc: wacc.rawPointer.assumingMemoryBound(to: Float.self),
         segLen: segLen, isFirst: isFirst, isLast: isLast)
+    }
+
+    Function("loadDeepChroma") { (uri: String) in
+      let url = URL(string: uri).flatMap { $0.isFileURL ? $0 : nil } ?? URL(fileURLWithPath: uri)
+      self.deepChroma = try DeepChroma(contentsOf: url)
+    }
+
+    // Chroma (trames x 12) du morceau entier à partir des pistes Int16 :
+    // mono = moyenne des canaux, comme madmom. out : frameCount x 12.
+    Function("deepChroma") { (left: Int16Array, right: Int16Array, out: Float32Array) in
+      guard let model = self.deepChroma else {
+        throw Exception(name: "NotLoaded", description: "deepChroma : appeler loadDeepChroma d'abord")
+      }
+      let count = left.length
+      guard right.length == count, out.length == DeepChroma.frameCount(samples: count) * 12 else {
+        throw Exception(name: "BadLength", description: "deepChroma : tailles de tableaux inattendues")
+      }
+      let l = left.rawPointer.assumingMemoryBound(to: Int16.self)
+      let r = right.rawPointer.assumingMemoryBound(to: Int16.self)
+      var mono = [Float](repeating: 0, count: count)
+      for i in 0..<count { mono[i] = (Float(l[i]) + Float(r[i])) / 65536 }
+      let chroma = mono.withUnsafeBufferPointer { model.chroma(mono: $0.baseAddress!, count: count) }
+      let dst = out.rawPointer.assumingMemoryBound(to: Float.self)
+      for i in 0..<chroma.count { dst[i] = chroma[i] }
     }
 
     Function("flush") { (acc: Float32Array, wacc: Float32Array, finalLen: Int, out: Int16Array) in

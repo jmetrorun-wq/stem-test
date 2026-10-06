@@ -11,15 +11,20 @@ import { AudioContext, decodeAudioData } from 'react-native-audio-api';
 import * as ort from 'onnxruntime-react-native';
 
 import { Separator, SAMPLE_RATE, TRACKS, toInt16 } from '../separator.js';
+import { chordColor, chromaToChords, detectKey } from '../chords.js';
 import { MonolithRunner } from './monolithRunner.js';
-import { nativeDsp } from './nativeDsp.js';
+import { deepChroma, loadDeepChroma, nativeDsp } from './nativeDsp.js';
 
 // Modèle réexporté avec l'attention par paquets (tools/export_htdemucs.py) :
 // ~1,3 Go au pic au lieu de 2,6-3,2 Go (l'app était tuée par iOS). Hébergé
 // en release GitHub (fichier > 100 Mo, hors du dépôt), SHA-256
 // 03781f4cfac687d8ca405e518f33c5fe187ea33db8cc1f019019b1313a02ae02.
-const MODEL_URL =
-  'https://github.com/jmetrorun-wq/stem-test/releases/download/model-v1/htdemucs_chunk128.onnx';
+const RELEASE = 'https://github.com/jmetrorun-wq/stem-test/releases/download/model-v1/';
+const MODEL_URL = RELEASE + 'htdemucs_chunk128.onnx';
+// Poids du « chroma profond » de madmom (accords), extraits par
+// tools/chroma/export_deep_chroma.py. SHA-256
+// 738c8219d804cbd2ea6a6ddbe85fc1bb88f0847316a2ff2696f56c6b78ced972.
+const CHROMA_URL = RELEASE + 'deep_chroma.bin';
 
 const LABELS = { drums: 'Batterie', bass: 'Basse', other: 'Autres (guitare, piano…)', vocals: 'Voix' };
 const MODES = { cpu: 'processeur', cpu2: '2 cœurs rapides', coreml: 'Core ML', mlprogram: 'Core ML récent' };
@@ -33,26 +38,30 @@ const COREML_FLAGS = { coreml: 0, mlprogram: 8 | 16 };
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 const modelFile = new File(Paths.document, 'htdemucs_chunk128.onnx');
+const chromaFile = new File(Paths.document, 'deep_chroma.bin');
+let chromaLoaded = false;
 // Trace d'avancement écrite sur disque : si iOS tue l'app (mémoire), on
 // retrouve au relancement l'étape où ça s'est arrêté.
 const crumbFile = new File(Paths.document, 'crumb.json');
 const crumb = (data) => { try { crumbFile.write(JSON.stringify(data)); } catch {} };
 const readCrumb = () => { try { return crumbFile.exists ? JSON.parse(crumbFile.textSync()) : null; } catch { return null; } };
 
-async function ensureModel(onStatus) {
-  if (modelFile.exists && modelFile.size > 100e6) return;
+// Télécharge un fichier une seule fois (3 essais), s'il manque ou est
+// incomplet.
+async function ensureFile(file, url, minSize, label, onStatus) {
+  if (file.exists && file.size >= minSize) return;
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      onStatus(`Téléchargement du modèle (174 Mo, une seule fois)… essai ${attempt}/3`);
-      if (modelFile.exists) modelFile.delete();
-      await File.downloadFileAsync(MODEL_URL, modelFile);
+      onStatus(`Téléchargement ${label}, une seule fois… essai ${attempt}/3`);
+      if (file.exists) file.delete();
+      await File.downloadFileAsync(url, file);
       return;
     } catch (e) {
       lastError = e;
     }
   }
-  throw new Error(`Téléchargement du modèle impossible (${lastError?.message || lastError})`);
+  throw new Error(`Téléchargement ${label} impossible (${lastError?.message || lastError})`);
 }
 
 export default function App() {
@@ -67,6 +76,9 @@ export default function App() {
   const [summary, setSummary] = useState('');
   const [error, setError] = useState('');
   const [stems, setStems] = useState(null);
+  const [chords, setChords] = useState(null);
+  const [key, setKey] = useState(null);
+  const [position, setPosition] = useState(0);
   const [enabled, setEnabled] = useState(() => Object.fromEntries(TRACKS.map((t) => [t, true])));
   const [playing, setPlaying] = useState(false);
   const player = useRef({ ctx: null, source: null, startedAt: 0, offset: 0 });
@@ -78,6 +90,21 @@ export default function App() {
     return () => clearInterval(id);
   }, [busy]);
 
+  // Position de lecture (en boucle), pour afficher l'accord en cours.
+  useEffect(() => {
+    if (!playing || !stems) return undefined;
+    const length = stems.vocals.left.length / SAMPLE_RATE;
+    const id = setInterval(() => {
+      const p = player.current;
+      if (p.ctx) setPosition((p.ctx.currentTime - p.startedAt) % length);
+    }, 100);
+    return () => clearInterval(id);
+  }, [playing, stems]);
+
+  const current = chords ? chords.findIndex((c) => c.time <= position && position < c.end) : -1;
+  const nowChord = current >= 0 ? chords[current].chord : null;
+  const nextChord = current >= 0 ? chords.slice(current + 1).find((c) => c.chord !== 'N')?.chord : null;
+
   async function pick() {
     const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
     if (!res.canceled) setSong(res.assets[0]);
@@ -85,7 +112,7 @@ export default function App() {
 
   async function run() {
     stopPlayback();
-    setBusy(true); setError(''); setSummary(''); setStems(null); setDetail('');
+    setBusy(true); setError(''); setSummary(''); setStems(null); setChords(null); setKey(null); setDetail('');
     await activateKeepAwakeAsync();
     const t0 = Date.now();
     try {
@@ -97,8 +124,23 @@ export default function App() {
       const left = toInt16(audio.getChannelData(0).subarray(0, keep));
       const right = audio.numberOfChannels > 1 ? toInt16(audio.getChannelData(1).subarray(0, keep)) : left;
 
+      // Accords : chroma profond (natif) sur le mix complet, puis gabarits
+      // (JS). Isoler les pistes n'améliorait pas la détection (mesuré sur
+      // 3 morceaux), donc pas besoin d'attendre la séparation.
+      crumb({ phase: 'accords', mode, duration });
+      await ensureFile(chromaFile, CHROMA_URL, 3e6, 'des poids des accords (4 Mo)', setStatus);
+      if (!chromaLoaded) { loadDeepChroma(chromaFile.uri); chromaLoaded = true; }
+      setStatus('Détection des accords…');
+      const tChords = Date.now();
+      const chroma = deepChroma(left, right);
+      const found = chromaToChords(chroma, duration);
+      const songKey = detectKey(chroma);
+      const chordSec = (Date.now() - tChords) / 1000;
+      setChords(found);
+      setKey(songKey);
+
       crumb({ phase: 'chargement du modèle', mode, duration });
-      await ensureModel(setStatus);
+      await ensureFile(modelFile, MODEL_URL, 100e6, 'du modèle (174 Mo)', setStatus);
       setStatus('Chargement du modèle…');
       const runner = new MonolithRunner(ort);
       // Optimisations de graphe désactivées : elles dupliquaient une partie
@@ -134,7 +176,8 @@ export default function App() {
       setStatus('Terminé');
       setSummary(`✓ [${MODES[mode]}] Séparé en ${fmt(sepSec)} pour un morceau de ${fmt(duration)} `
         + `(dont modèle ${fmt(modelMs / 1000)}, audio ${fmt(sepSec - modelMs / 1000)}) `
-        + `+ ${loadSec.toFixed(0)} s de décodage et de chargement du modèle`);
+        + `+ ${loadSec.toFixed(0)} s de décodage, accords et chargement du modèle. `
+        + `${found.filter((c) => c.chord !== 'N').length} accords trouvés en ${chordSec.toFixed(1)} s, tonalité ${songKey.fr}`);
     } catch (e) {
       crumb({ phase: 'fini' });
       setStatus('Échec');
@@ -239,6 +282,15 @@ export default function App() {
 
       {stems && (
         <View style={styles.card}>
+          {chords && (
+            <View style={styles.chordBox}>
+              <Text style={styles.muted}>Tonalité : {key?.fr} — {fmt(position)}</Text>
+              <Text style={[styles.chordNow, { color: nowChord ? chordColor(nowChord) : C.muted }]}>
+                {!nowChord || nowChord === 'N' ? '—' : nowChord}
+              </Text>
+              <Text style={styles.muted}>Ensuite : {nextChord ?? '—'}</Text>
+            </View>
+          )}
           <View style={styles.stems}>
             {TRACKS.map((t) => (
               <TouchableOpacity key={t} onPress={() => toggleStem(t)} style={[styles.stem, !enabled[t] && styles.stemOff]}>
@@ -278,6 +330,8 @@ const styles = StyleSheet.create({
   ok: { color: C.ok, fontSize: 15 },
   err: { color: C.err, fontSize: 15 },
   stems: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chordBox: { alignItems: 'center', gap: 4 },
+  chordNow: { fontSize: 56, fontWeight: '800' },
   stem: { width: '48%', backgroundColor: C.chip, borderRadius: 10, padding: 12, alignItems: 'center' },
   stemOff: { opacity: 0.35 },
   stemText: { color: C.text },

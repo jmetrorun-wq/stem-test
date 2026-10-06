@@ -23,3 +23,15 @@ export const nativeDsp = {
     return out;
   },
 };
+
+// Chroma profond (accords) : 10 trames par seconde, 12 notes.
+export const CHROMA_FPS = 10;
+export function loadDeepChroma(uri) {
+  StemDsp.loadDeepChroma(uri);
+}
+export function deepChroma(left, right) {
+  const frames = Math.ceil(left.length / (44100 / CHROMA_FPS));
+  const out = new Float32Array(frames * 12);
+  StemDsp.deepChroma(left, right, out);
+  return out;
+}

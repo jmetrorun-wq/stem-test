@@ -1,7 +1,8 @@
 // Accords et tonalité à partir du « chroma profond » (12 notes, 10 trames
 // par seconde), portage de chord_detector.py de ChordSplit
 // (_match_frame, _chroma_to_chord_segments, detect_key, couleurs et noms) :
-// mêmes gabarits, même seuil, même fusion des segments courts.
+// mêmes gabarits, même seuil, même fusion des segments courts. Seule
+// différence : les changements d'accord sont avancés de DETECTION_LAG.
 
 export const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -37,6 +38,17 @@ NOTES.forEach((note, root) => {
 const MIN_CONFIDENCE = 0.78;
 // Segments plus courts fusionnés au précédent (secondes).
 const MIN_CHORD_DUR = 0.6;
+// Les changements d'accord détectés arrivent en retard d'environ 0,15 s :
+// mesuré sur 3 morceaux face à ChordSplit en production (calé sur les
+// temps), +0,15 s partout, accord 81,5 % -> 82,8 % une fois corrigé ;
+// l'utilisateur mesurait +0,2 s à l'oreille sur iPhone. Le contexte de
+// 1,5 s du chroma profond fait basculer l'accord un peu après le vrai
+// changement.
+export const DETECTION_LAG = 0.15;
+// Version du calage des accords enregistrée avec chaque morceau : les
+// morceaux analysés avant la correction (sans version) sont recalés à
+// l'affichage.
+export const CHORD_TIMING = 2;
 
 function matchFrame(chroma, offset) {
   let norm = 0;
@@ -71,7 +83,13 @@ export function chromaToChords(chroma, duration) {
     if (seg.end - seg.time < MIN_CHORD_DUR && cleaned.length) cleaned[cleaned.length - 1].end = seg.end;
     else cleaned.push(seg);
   }
-  return cleaned;
+  // Recalage après la fusion, pour garder exactement les accords de
+  // ChordSplit (décaler avant changeait les décisions de fusion au début).
+  return cleaned.map((seg, i) => ({
+    ...seg,
+    time: i === 0 ? 0 : seg.time - DETECTION_LAG,
+    end: i === cleaned.length - 1 ? seg.end : seg.end - DETECTION_LAG,
+  }));
 }
 
 // ── Tonalité (Krumhansl-Kessler) ──────────────────────────────────────

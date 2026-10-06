@@ -8,7 +8,7 @@ import { AudioContext, decodeAudioData } from 'react-native-audio-api';
 import { File, Paths } from 'expo-file-system';
 
 import { SAMPLE_RATE, TRACKS } from '../separator.js';
-import { chordColor } from '../chords.js';
+import { CHORD_TIMING, DETECTION_LAG, chordColor } from '../chords.js';
 import { fmt } from './analyze.js';
 import { stemUri, updateSong } from './library.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
@@ -32,15 +32,20 @@ export default function Player({ song, onBack }) {
   const [enabled, setEnabled] = useState(() => Object.fromEntries(TRACKS.map((t) => [t, t !== muted])));
   const audio = useRef({ ctx: null, buffers: {}, gains: {}, sources: [], startedAt: 0, offset: 0 });
   const bar = useRef(null);
-  const [shift, setShift] = useState(() => readSettings().chordShift ?? 0);
+  // Clé chordShift2 : l'ancien réglage (chordShift, +0,2 s) compensait le
+  // retard de détection désormais corrigé, on repart de 0.
+  const [shift, setShift] = useState(() => readSettings().chordShift2 ?? 0);
   const changeShift = (delta) => {
     const next = Math.round((shift + delta) * 10) / 10;
     setShift(next);
-    writeSettings({ chordShift: next });
+    writeSettings({ chordShift2: next });
   };
 
   // Barre des accords : seulement les vrais accords (pas les silences).
-  const chords = song.chords.filter((c) => c.chord !== 'N');
+  // Morceaux analysés avant la correction du retard de détection : recalés.
+  const lag = (song.chordTiming ?? 1) < CHORD_TIMING ? DETECTION_LAG : 0;
+  const chords = song.chords.filter((c) => c.chord !== 'N')
+    .map((c) => (lag ? { ...c, time: Math.max(0, c.time - lag), end: c.end - lag } : c));
 
   useEffect(() => {
     let cancelled = false;

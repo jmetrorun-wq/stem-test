@@ -7,7 +7,7 @@ import { decodeAudioData } from 'react-native-audio-api';
 import * as ort from 'onnxruntime-react-native';
 
 import { Separator, SAMPLE_RATE, toInt16 } from '../separator.js';
-import { chromaToChords, detectKey } from '../chords.js';
+import { CHORD_TIMING, chromaToChords, detectKey } from '../chords.js';
 import { MonolithRunner } from './monolithRunner.js';
 import { deepChroma, loadDeepChroma, nativeDsp } from './nativeDsp.js';
 import { newSongId, saveSong } from './library.js';
@@ -112,6 +112,7 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
     duration,
     key,
     chords,
+    chordTiming: CHORD_TIMING,
     instrument,
     createdAt: Date.now(),
     analysisSeconds: Math.round((Date.now() - t0) / 1000),

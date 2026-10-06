@@ -22,7 +22,10 @@ const MODEL_URL =
   'https://github.com/jmetrorun-wq/stem-test/releases/download/model-v1/htdemucs_chunk128.onnx';
 
 const LABELS = { drums: 'Batterie', bass: 'Basse', other: 'Autres (guitare, piano…)', vocals: 'Voix' };
-const MODES = { cpu: 'processeur', coreml: 'Core ML', mlprogram: 'Core ML récent' };
+const MODES = { cpu: 'processeur', cpu2: '2 cœurs rapides', coreml: 'Core ML', mlprogram: 'Core ML récent' };
+// cpu2 : l'iPhone 13 a 2 cœurs rapides + 4 lents ; avec tous les cœurs,
+// chaque étape attend les plus lents.
+const THREADS = { cpu2: 2 };
 // Drapeaux Core ML d'onnxruntime : 8 = formes d'entrée statiques
 // uniquement, 16 = format ML Program (plus récent, fp16). Le mode
 // « coreml » (ancien format NeuralNetwork) plantait au chargement.
@@ -102,9 +105,10 @@ export default function App() {
       // du modèle (pic mesuré 2,4 Go avec, 1,3 Go sans, pour ~20 % de temps
       // de calcul en plus).
       await runner.load(modelFile.uri, {
-        executionProviders: mode === 'cpu'
-          ? [{ name: 'cpu', useArena: false }]
-          : [{ name: 'coreml', coreMlFlags: COREML_FLAGS[mode] }, { name: 'cpu', useArena: false }],
+        executionProviders: mode in COREML_FLAGS
+          ? [{ name: 'coreml', coreMlFlags: COREML_FLAGS[mode] }, { name: 'cpu', useArena: false }]
+          : [{ name: 'cpu', useArena: false }],
+        ...(THREADS[mode] ? { intraOpNumThreads: THREADS[mode] } : {}),
         graphOptimizationLevel: 'disabled',
         enableCpuMemArena: false,
         enableMemPattern: false,
@@ -260,13 +264,13 @@ const styles = StyleSheet.create({
   muted: { color: C.muted, fontSize: 14, lineHeight: 20 },
   label: { color: C.text, fontSize: 15, flex: 1 },
   card: { backgroundColor: C.card, borderRadius: 14, padding: 14, gap: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   primary: { backgroundColor: C.accent, borderRadius: 10, padding: 14, alignItems: 'center' },
   primaryText: { color: '#1a1a1a', fontWeight: '700', fontSize: 16 },
   secondary: { backgroundColor: C.chip, borderRadius: 10, padding: 14, alignItems: 'center' },
   secondaryText: { color: C.text, fontSize: 15 },
   disabled: { opacity: 0.4 },
-  chip: { flex: 1, backgroundColor: C.chip, borderRadius: 10, padding: 10, alignItems: 'center' },
+  chip: { width: '48%', backgroundColor: C.chip, borderRadius: 10, padding: 10, alignItems: 'center' },
   chipOn: { backgroundColor: C.accent },
   chipText: { color: C.text, fontSize: 14 },
   chipTextOn: { color: '#1a1a1a', fontWeight: '600' },

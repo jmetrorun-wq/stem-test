@@ -15,9 +15,11 @@ import { MonolithRunner } from './monolithRunner.js';
 import { nativeDsp } from './nativeDsp.js';
 
 // Modèle réexporté avec l'attention par paquets (tools/export_htdemucs.py) :
-// ~1,3 Go au pic au lieu de 2,6-3,2 Go (l'app était tuée par iOS). Servi
-// depuis le Mac par le Wi-Fi le temps des tests (trop gros pour le dépôt).
-const MODEL_URL = 'http://10.10.0.44:8000/htdemucs_chunk128.onnx';
+// ~1,3 Go au pic au lieu de 2,6-3,2 Go (l'app était tuée par iOS). Hébergé
+// en release GitHub (fichier > 100 Mo, hors du dépôt), SHA-256
+// 03781f4cfac687d8ca405e518f33c5fe187ea33db8cc1f019019b1313a02ae02.
+const MODEL_URL =
+  'https://github.com/jmetrorun-wq/stem-test/releases/download/model-v1/htdemucs_chunk128.onnx';
 
 const LABELS = { drums: 'Batterie', bass: 'Basse', other: 'Autres (guitare, piano…)', vocals: 'Voix' };
 const MODES = { cpu: 'processeur', coreml: 'Core ML', mlprogram: 'Core ML récent' };

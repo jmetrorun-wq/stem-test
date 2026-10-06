@@ -36,6 +36,14 @@ export function deepChroma(left, right) {
   return out;
 }
 
+// Note de basse d'une piste basse séparée : 10 trames par seconde, 12 notes.
+export function bassChroma(left, right) {
+  const frames = Math.ceil(left.length / 4410);
+  const out = new Float32Array(frames * 12);
+  StemDsp.bassChroma(left, right, out);
+  return out;
+}
+
 // Enregistre une piste séparée en AAC (.m4a, ~7x plus léger que le WAV).
 export function saveStem(uri, left, right) {
   StemDsp.saveStem(uri, left, right);

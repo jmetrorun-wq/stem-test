@@ -1,15 +1,16 @@
-// Analyse complète d'un morceau sur le téléphone : décodage, accords
-// (chroma profond natif + gabarits), séparation des 4 pistes (htdemucs,
-// onnxruntime), puis enregistrement dans la bibliothèque.
+// Analyse complète d'un morceau sur le téléphone : décodage, séparation des
+// 4 pistes (htdemucs, onnxruntime), accords (méthode B de chords.js :
+// chroma profond de la piste « autres » + note de la piste basse), puis
+// enregistrement dans la bibliothèque.
 
 import { File, Paths } from 'expo-file-system';
 import { decodeAudioData } from 'react-native-audio-api';
 import * as ort from 'onnxruntime-react-native';
 
 import { Separator, SAMPLE_RATE, toInt16 } from '../separator.js';
-import { CHORD_TIMING, chromaToChords, detectKey } from '../chords.js';
+import { CHORD_TIMING, combineChroma, detectChords, detectKey, spellChord, spellKey } from '../chords.js';
 import { MonolithRunner } from './monolithRunner.js';
-import { deepChroma, loadDeepChroma, nativeDsp } from './nativeDsp.js';
+import { bassChroma, deepChroma, loadDeepChroma, nativeDsp } from './nativeDsp.js';
 import { newSongId, saveSong } from './library.js';
 
 const RELEASE = 'https://github.com/jmetrorun-wq/stem-test/releases/download/model-v1/';
@@ -68,17 +69,8 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
   const left = toInt16(audio.getChannelData(0).subarray(0, keep));
   const right = audio.numberOfChannels > 1 ? toInt16(audio.getChannelData(1).subarray(0, keep)) : left;
 
-  // Accords sur le mix complet : isoler les pistes n'améliorait pas la
-  // détection (mesuré sur 3 morceaux), inutile d'attendre la séparation.
-  crumb({ phase: 'accords', duration });
+  // Téléchargements d'abord : rien ne doit échouer après 4 min de calcul.
   await ensureFile(chromaFile, CHROMA_URL, 3e6, 'des poids des accords (4 Mo)', onStatus);
-  if (!chromaLoaded) { loadDeepChroma(chromaFile.uri); chromaLoaded = true; }
-  onStatus('Détection des accords…');
-  await repaint();
-  const chroma = deepChroma(left, right);
-  const chords = chromaToChords(chroma, duration);
-  const key = detectKey(chroma);
-
   crumb({ phase: 'chargement du modèle', duration });
   await ensureFile(modelFile, MODEL_URL, 100e6, 'du modèle de séparation (174 Mo)', onStatus);
   onStatus('Chargement du modèle…');
@@ -103,6 +95,17 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
     onDetail({ progress: done / total, remaining: spent / done * (total - done) });
   });
 
+  // Accords : sur les pistes séparées (l'accord sur « autres », la vraie
+  // basse sur « basse »), cf. méthode B de chords.js.
+  crumb({ phase: 'accords', duration });
+  onStatus('Détection des accords…');
+  await repaint();
+  if (!chromaLoaded) { loadDeepChroma(chromaFile.uri); chromaLoaded = true; }
+  const otherChroma = deepChroma(stems.other.left, stems.other.right);
+  const bass = bassChroma(stems.bass.left, stems.bass.right);
+  const key = detectKey(combineChroma(otherChroma, bass));
+  const chords = detectChords(otherChroma, bass, duration).map((c) => ({ ...c, chord: spellChord(c.chord, key) }));
+
   onStatus('Enregistrement des pistes…');
   crumb({ phase: 'enregistrement', duration });
   await repaint();
@@ -110,9 +113,10 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
     id: newSongId(),
     title: (source.name || 'Morceau').replace(/\.[^.]+$/, ''),
     duration,
-    key,
+    key: spellKey(key),
     chords,
     chordTiming: CHORD_TIMING,
+    chordMethod: 'B',
     instrument,
     createdAt: Date.now(),
     analysisSeconds: Math.round((Date.now() - t0) / 1000),

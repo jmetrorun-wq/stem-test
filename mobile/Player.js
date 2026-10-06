@@ -13,7 +13,7 @@ import { fmt } from './analyze.js';
 import { stemUri, updateSong } from './library.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
 
-const CHIP = 76; // largeur d'une case d'accord (+ marge)
+const CHIP = 96; // largeur d'une case d'accord (+ marge) : tient « Bbm7b5/E »
 
 // Décalage d'affichage des accords réglé par l'utilisateur (secondes,
 // positif = accords affichés plus tôt), mémorisé pour tous les morceaux :
@@ -156,13 +156,15 @@ export default function Player({ song, onBack }) {
       {ready && (
         <>
           <View style={styles.card}>
-            <Text style={[styles.chordNow, { color: nowChord ? chordColor(nowChord) : C.muted }]}>{nowChord ?? '—'}</Text>
+            <Text style={[styles.chordNow, { color: nowChord ? chordColor(nowChord) : C.muted }]}
+              numberOfLines={1} adjustsFontSizeToFit>{nowChord ?? '—'}</Text>
             <Text style={styles.muted}>Ensuite : {nextChord ?? '—'}</Text>
             <ScrollView ref={bar} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bar}>
               {chords.map((c, i) => (
                 <TouchableOpacity key={i} onPress={() => seek(c.time)}
                   style={[styles.chip, { borderColor: chordColor(c.chord) }, i === current && { backgroundColor: chordColor(c.chord) }]}>
-                  <Text style={[styles.chipText, i === current && styles.chipTextNow]}>{c.chord}</Text>
+                  <Text style={[styles.chipText, i === current && styles.chipTextNow]}
+                    numberOfLines={1} adjustsFontSizeToFit>{c.chord}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -224,7 +226,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: C.card, borderRadius: 14, padding: 14, gap: 10, alignItems: 'stretch' },
   chordNow: { fontSize: 64, fontWeight: '800', textAlign: 'center' },
   bar: { paddingVertical: 4, gap: 6 },
-  chip: { width: CHIP - 6, paddingVertical: 10, borderRadius: 10, borderWidth: 2, alignItems: 'center' },
+  chip: { width: CHIP - 6, paddingVertical: 10, paddingHorizontal: 4, borderRadius: 10, borderWidth: 2, alignItems: 'center' },
   chipText: { color: C.text, fontSize: 16, fontWeight: '600' },
   chipTextNow: { color: '#111' },
   time: { color: C.text, fontSize: 18, textAlign: 'center', fontVariant: ['tabular-nums'] },

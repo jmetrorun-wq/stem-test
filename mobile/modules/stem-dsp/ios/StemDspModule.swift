@@ -67,6 +67,22 @@ public class StemDspModule: Module {
       for i in 0..<chroma.count { dst[i] = chroma[i] }
     }
 
+    // Chroma de la note de basse (trames x 12, 10 /s) d'une piste basse
+    // séparée (Int16 stéréo) ; cf. BassChroma.
+    Function("bassChroma") { (left: Int16Array, right: Int16Array, out: Float32Array) in
+      let count = left.length
+      guard right.length == count, out.length == BassChroma.frameCount(samples: count) * 12 else {
+        throw Exception(name: "BadLength", description: "bassChroma : tailles de tableaux inattendues")
+      }
+      let l = left.rawPointer.assumingMemoryBound(to: Int16.self)
+      let r = right.rawPointer.assumingMemoryBound(to: Int16.self)
+      var mono = [Float](repeating: 0, count: count)
+      for i in 0..<count { mono[i] = (Float(l[i]) + Float(r[i])) / 65536 }
+      let chroma = mono.withUnsafeBufferPointer { BassChroma.shared.compute(mono: $0.baseAddress!, count: count) }
+      let dst = out.rawPointer.assumingMemoryBound(to: Float.self)
+      for i in 0..<chroma.count { dst[i] = chroma[i] }
+    }
+
     // Enregistre une piste (Int16 stéréo) en AAC .m4a (cf. StemAudio).
     Function("saveStem") { (uri: String, left: Int16Array, right: Int16Array) in
       guard left.length == right.length, left.length > 0 else {

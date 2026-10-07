@@ -12,6 +12,7 @@ import { SAMPLE_RATE, TRACKS } from '../separator.js';
 import { CHORD_TIMING, DETECTION_LAG, chordColor } from '../chords.js';
 import { beatCells } from '../beats.js';
 import BeatStrip from './BeatStrip.js';
+import ChordDiagram from './ChordDiagram.js';
 import { fmt } from './analyze.js';
 import { stemUri, updateSong } from './library.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
@@ -34,6 +35,11 @@ export default function Player({ song, onBack }) {
   // reçoit pas les nouvelles versions) : toujours à jour.
   const playingRef = useRef(false);
   const [syncKey, setSyncKey] = useState(0);
+  // Diagramme affiché (guitare / piano) et clic sur les temps : mémorisés.
+  const [diagram, setDiagram] = useState(() => readSettings().diagram ?? (song.instrument === 'guitar' ? 'guitar' : 'piano'));
+  const [click, setClick] = useState(() => readSettings().click ?? false);
+  const chooseDiagram = (d) => { setDiagram(d); writeSettings({ diagram: d }); };
+  const toggleClick = () => { const next = !click; setClick(next); writeSettings({ click: next }); };
   // Diagnostic : retard maximal du JS sur les 2 dernières secondes
   // (minuterie de 100 ms qui arrive en retard = JS surchargé).
   const [jsLag, setJsLag] = useState(0);
@@ -72,6 +78,48 @@ export default function Player({ song, onBack }) {
     if (!playingRef.current || !a.ctx) return a.offset;
     return Math.max(0, a.ctx.currentTime - a.startedAt);
   }, []);
+
+  // Clic sur les temps détectés (accent sur le premier temps de la
+  // mesure) : programmé sur l'horloge audio par petites avances de 0,5 s,
+  // donc exactement calé sur la musique quel que soit le retard du JS.
+  useEffect(() => {
+    const grid = song.grid;
+    const a = audio.current;
+    if (!playing || !click || !grid || !a.ctx) return undefined;
+    if (!a.clicks) {
+      const make = (freq) => {
+        const n = Math.round(0.03 * SAMPLE_RATE);
+        const data = new Float32Array(n);
+        for (let i = 0; i < n; i++) data[i] = 0.7 * Math.sin((2 * Math.PI * freq * i) / SAMPLE_RATE) * Math.exp(-i / (0.006 * SAMPLE_RATE));
+        const buffer = a.ctx.createBuffer(1, n, SAMPLE_RATE);
+        buffer.copyToChannel(data, 0);
+        return buffer;
+      };
+      a.clicks = { accent: make(1600), normal: make(1000), gain: a.ctx.createGain() };
+      a.clicks.gain.connect(a.ctx.destination);
+    }
+    const { beatTimes, beatsPerBar, phase } = grid;
+    const now = getTime();
+    let next = beatTimes.findIndex((t) => t >= now);
+    if (next < 0) return undefined;
+    const scheduled = [];
+    const schedule = () => {
+      const horizon = getTime() + 0.5;
+      while (next < beatTimes.length && beatTimes[next] < horizon) {
+        const source = a.ctx.createBufferSource();
+        const accent = next >= phase && (next - phase) % beatsPerBar === 0;
+        source.buffer = accent ? a.clicks.accent : a.clicks.normal;
+        source.connect(a.clicks.gain);
+        source.start(a.startedAt + beatTimes[next]);
+        scheduled.push(source);
+        next++;
+      }
+      if (scheduled.length > 16) scheduled.splice(0, scheduled.length - 16);
+    };
+    schedule();
+    const id = setInterval(schedule, 150);
+    return () => { clearInterval(id); for (const s of scheduled) { try { s.stop(); } catch {} } };
+  }, [playing, click, syncKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,6 +241,14 @@ export default function Player({ song, onBack }) {
             <Text style={[styles.chordNow, { color: nowChord ? chordColor(nowChord) : C.muted }]}
               numberOfLines={1} adjustsFontSizeToFit>{nowChord ?? '—'}</Text>
             <Text style={styles.muted}>Ensuite : {nextChord ?? '—'}</Text>
+            <View style={styles.toggle}>
+              {[['guitar', 'Guitare'], ['piano', 'Piano']].map(([id, label]) => (
+                <TouchableOpacity key={id} onPress={() => chooseDiagram(id)} style={[styles.toggleItem, diagram === id && styles.toggleOn]}>
+                  <Text style={[styles.toggleText, diagram === id && styles.toggleTextOn]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <ChordDiagram name={nowChord} instrument={diagram} />
             {cells ? (
               <BeatStrip cells={cells} playing={playing} getTime={getTime} syncKey={syncKey} onSeek={seek} />
             ) : (
@@ -219,6 +275,11 @@ export default function Player({ song, onBack }) {
 
           <View style={styles.card}>
             <Text style={styles.time}>{fmt(position)} / {fmt(song.duration)}</Text>
+            {song.grid && (
+              <TouchableOpacity onPress={toggleClick} style={[styles.pill, styles.clickBtn, click && styles.pillOn]}>
+                <Text style={[styles.pillText, click && styles.pillTextOn]}>{click ? '🔔 Clic sur les temps : oui' : '🔕 Clic sur les temps : non'}</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.controls}>
               <TouchableOpacity style={styles.round} onPress={() => seek(position - 10)}><Text style={styles.roundText}>−10 s</Text></TouchableOpacity>
               <TouchableOpacity style={[styles.round, styles.playBtn]} onPress={() => (playing ? pause() : play())}>
@@ -283,5 +344,11 @@ const styles = StyleSheet.create({
   stemOff: { opacity: 0.35 },
   stemText: { color: C.text },
   stemTextOff: { textDecorationLine: 'line-through' },
+  toggle: { flexDirection: 'row', alignSelf: 'center', backgroundColor: C.chip, borderRadius: 10, padding: 3, gap: 3 },
+  toggleItem: { paddingHorizontal: 18, paddingVertical: 6, borderRadius: 8 },
+  toggleOn: { backgroundColor: C.accent },
+  toggleText: { color: C.text, fontSize: 14 },
+  toggleTextOn: { color: '#111', fontWeight: '600' },
+  clickBtn: { alignSelf: 'center' },
   debug: { color: '#555b68', fontSize: 11, textAlign: 'center', marginTop: 8 },
 });

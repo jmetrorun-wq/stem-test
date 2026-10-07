@@ -2,22 +2,22 @@
 // un trait à chaque début de mesure, le nom de l'accord quand il change.
 // L'instant joué reste au centre, sous le trait.
 //
-// Performance : une première version suivait la lecture à chaque image
-// (requestAnimationFrame) et était redessinée à chaque mise à jour de
-// l'écran (10 /s, 500+ cases) : le JS saturait et l'app ne répondait plus
-// (même plus au bouton pause). Désormais : suivi 10 fois par seconde avec
-// défilement animé par iOS entre deux suivis, composant mémorisé (les
-// mises à jour de l'écran de jeu ne le redessinent pas) et seule la case
-// active change.
+// Historique : 1) suivi à chaque image (requestAnimationFrame) + rendu de
+// 500+ cases 10 /s : l'app ne répondait plus ; 2) ScrollView recalé 10 /s
+// avec défilement animé : toujours bloquée, et la barre traînait derrière
+// la musique (chaque animation de ~0,3 s rattrapait une cible qui avance).
+// Désormais : pas de ScrollView ; la bande est déplacée par une animation
+// native (Animated, useNativeDriver), linéaire d'un temps au suivant et
+// arrivant pile sur le temps suivant. Le JS n'intervient qu'une fois par
+// temps (lancer le déplacement suivant, changer la case active).
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { chordColor } from '../chords.js';
 import { C } from './theme.js';
 
 const CELL = 58;
-const FOLLOW_MS = 100;
 
 // Indice de la case contenant t (recherche dichotomique).
 function cellAt(cells, t) {
@@ -32,27 +32,24 @@ function cellAt(cells, t) {
 
 const Cell = memo(function Cell({ cell, active, onPress }) {
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7}
-      style={[styles.cell, cell.barStart && styles.barStart, active && styles.active]}>
+    <Pressable onPress={onPress} style={[styles.cell, cell.barStart && styles.barStart, active && styles.active]}>
       <Text style={[styles.name, { color: chordColor(cell.chord) }]} numberOfLines={1} adjustsFontSizeToFit>
         {cell.showName ? cell.chord : ''}
       </Text>
       <View style={[styles.dot, active && styles.dotOn]} />
-    </TouchableOpacity>
+    </Pressable>
   );
 });
 
 /**
  * getTime() renvoie la position de lecture (s) ; syncKey change à chaque
- * saut / pause pour recaler la barre à l'arrêt. onSeek(t) : saut.
+ * lecture / saut / pause pour se recaler. onSeek(t) : saut.
  */
 function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
-  // Largeur réelle de la bande (mesurée) : la marge de chaque côté permet
-  // à la 1re et à la dernière case de venir sous le trait central.
   const [width, setWidth] = useState(0);
-  const scroll = useRef(null);
   const [active, setActive] = useState(-1);
-  const activeRef = useRef(-1);
+  // Position du point de lecture dans la bande (px depuis la 1re case).
+  const x = useRef(new Animated.Value(0)).current;
   const getTimeRef = useRef(getTime);
   getTimeRef.current = getTime;
   // onSeek change à chaque rendu de l'écran de jeu : les cases, mémorisées,
@@ -60,33 +57,46 @@ function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
   const seekRef = useRef(onSeek);
   seekRef.current = onSeek;
 
-  function follow(animated) {
-    const t = getTimeRef.current();
-    const idx = cellAt(cells, t);
-    const cell = cells[idx];
-    if (!cell) return;
-    const frac = Math.max(0, Math.min(1, (t - cell.start) / Math.max(0.001, cell.end - cell.start)));
-    scroll.current?.scrollTo({ x: (idx + frac) * CELL, animated });
-    if (idx !== activeRef.current) { activeRef.current = idx; setActive(idx); }
-  }
-
   useEffect(() => {
-    if (!playing) return undefined;
-    const id = setInterval(() => follow(true), FOLLOW_MS);
-    return () => clearInterval(id);
-  }, [playing, cells]);
-
-  // À l'arrêt (ouverture, saut, pause) : se caler sans animation.
-  useEffect(() => { follow(false); }, [syncKey, playing, cells, width]);
+    let stopped = false;
+    let timer = null;
+    // Se cale sur la position réelle, puis (en lecture) glisse jusqu'au
+    // temps suivant à vitesse constante et recommence à son arrivée.
+    const step = () => {
+      if (stopped) return;
+      const t = getTimeRef.current();
+      const idx = cellAt(cells, t);
+      const cell = cells[idx];
+      if (!cell) return;
+      const span = Math.max(0.001, cell.end - cell.start);
+      const frac = Math.max(0, Math.min(1, (t - cell.start) / span));
+      setActive(idx);
+      x.stopAnimation();
+      x.setValue((idx + frac) * CELL);
+      if (!playing) return;
+      const remaining = Math.max(0.01, cell.end - t);
+      Animated.timing(x, {
+        toValue: (idx + 1) * CELL,
+        duration: remaining * 1000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }).start();
+      // Minuterie plutôt que le rappel de fin d'animation : se recale sur
+      // l'horloge audio à chaque temps, sans dérive.
+      timer = setTimeout(step, remaining * 1000);
+    };
+    step();
+    return () => { stopped = true; clearTimeout(timer); x.stopAnimation(); };
+  }, [playing, syncKey, cells]);
 
   const handlers = useMemo(() => cells.map((c) => () => seekRef.current(c.start + 0.03)), [cells]);
+  const translateX = useMemo(() => Animated.multiply(x, -1), [x]);
 
   return (
-    <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
-      <ScrollView ref={scroll} horizontal showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: width / 2 }}>
+    <View style={styles.frame} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Animated.View style={[styles.row, { left: width / 2, transform: [{ translateX }] }]}>
         {cells.map((cell, i) => <Cell key={i} cell={cell} active={i === active} onPress={handlers[i]} />)}
-      </ScrollView>
+      </Animated.View>
       <View pointerEvents="none" style={[styles.playhead, { left: width / 2 - 1 }]} />
     </View>
   );
@@ -97,6 +107,8 @@ function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
 export default memo(BeatStrip, (a, b) => a.cells === b.cells && a.playing === b.playing && a.syncKey === b.syncKey);
 
 const styles = StyleSheet.create({
+  frame: { height: 64, overflow: 'hidden' },
+  row: { position: 'absolute', top: 0, flexDirection: 'row' },
   cell: { width: CELL, height: 62, borderLeftWidth: 1, borderLeftColor: '#2e3340', justifyContent: 'space-between', paddingVertical: 6, paddingHorizontal: 3 },
   barStart: { borderLeftWidth: 3, borderLeftColor: '#8a93a6' },
   active: { backgroundColor: '#1d2a36' },

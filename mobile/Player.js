@@ -34,6 +34,19 @@ export default function Player({ song, onBack }) {
   // reçoit pas les nouvelles versions) : toujours à jour.
   const playingRef = useRef(false);
   const [syncKey, setSyncKey] = useState(0);
+  // Diagnostic : retard maximal du JS sur les 2 dernières secondes
+  // (minuterie de 100 ms qui arrive en retard = JS surchargé).
+  const [jsLag, setJsLag] = useState(0);
+  useEffect(() => {
+    let last = Date.now(), worst = 0, since = Date.now();
+    const id = setInterval(() => {
+      const now = Date.now();
+      worst = Math.max(worst, now - last - 100);
+      last = now;
+      if (now - since >= 2000) { setJsLag(worst); worst = 0; since = now; }
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
   const [position, setPosition] = useState(0);
   const muted = INSTRUMENTS.find((i) => i.id === song.instrument)?.stem;
   const [enabled, setEnabled] = useState(() => Object.fromEntries(TRACKS.map((t) => [t, t !== muted])));
@@ -236,6 +249,7 @@ export default function Player({ song, onBack }) {
           </View>
         </>
       )}
+      <Text style={styles.debug}>Diagnostic — retard du JS : {jsLag} ms{jsLag > 300 ? ' (surchargé)' : ''}</Text>
     </ScrollView>
   );
 }
@@ -269,4 +283,5 @@ const styles = StyleSheet.create({
   stemOff: { opacity: 0.35 },
   stemText: { color: C.text },
   stemTextOff: { textDecorationLine: 'line-through' },
+  debug: { color: '#555b68', fontSize: 11, textAlign: 'center', marginTop: 8 },
 });

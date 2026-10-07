@@ -10,7 +10,7 @@ import { File, Paths } from 'expo-file-system';
 
 import { SAMPLE_RATE, TRACKS } from '../separator.js';
 import { CHORD_TIMING, DETECTION_LAG, chordColor } from '../chords.js';
-import { beatCells } from '../beats.js';
+import { beatCells, meterAndBars } from '../beats.js';
 import BeatStrip from './BeatStrip.js';
 import ChordDiagram from './ChordDiagram.js';
 import { fmt } from './analyze.js';
@@ -72,7 +72,10 @@ export default function Player({ song, onBack }) {
   const lag = (song.chordTiming ?? 1) < CHORD_TIMING ? DETECTION_LAG : 0;
   const chords = useMemo(() => song.chords.filter((c) => c.chord !== 'N')
     .map((c) => (lag ? { ...c, time: Math.max(0, c.time - lag), end: c.end - lag } : c)), [song.id]);
-  const cells = useMemo(() => (song.grid ? beatCells(song.grid, song.chords, song.duration) : null), [song.id]);
+  // Grille recalculée depuis les données brutes quand elles existent (le
+  // décodage a pu s'améliorer depuis l'analyse), sinon celle enregistrée.
+  const grid = useMemo(() => (song.beatsRaw ? meterAndBars(song.beatsRaw) : song.grid), [song.id]);
+  const cells = useMemo(() => (grid ? beatCells(grid, song.chords, song.duration) : null), [grid]);
   const getTime = useCallback(() => {
     const a = audio.current;
     if (!playingRef.current || !a.ctx) return a.offset;
@@ -83,7 +86,6 @@ export default function Player({ song, onBack }) {
   // mesure) : programmé sur l'horloge audio par petites avances de 0,5 s,
   // donc exactement calé sur la musique quel que soit le retard du JS.
   useEffect(() => {
-    const grid = song.grid;
     const a = audio.current;
     if (!playing || !click || !grid || !a.ctx) return undefined;
     if (!a.clicks) {
@@ -227,7 +229,7 @@ export default function Player({ song, onBack }) {
       <Text style={styles.title} numberOfLines={2}>{song.title}</Text>
       <Text style={styles.muted}>
         Tonalité : {song.key?.fr} — {fmt(song.duration)}
-        {song.grid ? ` — ♩ = ${song.grid.tempo}, ${song.grid.beatsPerBar} temps` : ''}
+        {grid ? ` — ♩ = ${grid.tempo}, ${grid.beatsPerBar} temps` : ''}
       </Text>
 
       {!ready && !error && (
@@ -275,7 +277,7 @@ export default function Player({ song, onBack }) {
 
           <View style={styles.card}>
             <Text style={styles.time}>{fmt(position)} / {fmt(song.duration)}</Text>
-            {song.grid && (
+            {grid && (
               <TouchableOpacity onPress={toggleClick} style={[styles.pill, styles.clickBtn, click && styles.pillOn]}>
                 <Text style={[styles.pillText, click && styles.pillTextOn]}>{click ? '🔔 Clic sur les temps : oui' : '🔕 Clic sur les temps : non'}</Text>
               </TouchableOpacity>

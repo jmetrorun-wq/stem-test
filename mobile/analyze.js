@@ -83,7 +83,10 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
   onStatus('Détection des temps et des mesures…');
   await repaint();
   if (!downbeatsLoaded) { loadDownbeats(downbeatsFile.uri); downbeatsLoaded = true; }
-  const grid = meterAndBars(detectBeats(left, right));
+  // Données brutes enregistrées avec le morceau : une amélioration du
+  // décodage (beats.js) s'applique alors sans réanalyse.
+  const beatsRaw = detectBeats(left, right);
+  const grid = meterAndBars(beatsRaw);
 
   crumb({ phase: 'chargement du modèle', duration });
   await ensureFile(modelFile, MODEL_URL, 100e6, 'du modèle de séparation (174 Mo)', onStatus);
@@ -132,6 +135,7 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
     chordTiming: CHORD_TIMING,
     chordMethod: 'B',
     grid,
+    beatsRaw,
     instrument,
     createdAt: Date.now(),
     analysisSeconds: Math.round((Date.now() - t0) / 1000),

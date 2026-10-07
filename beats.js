@@ -10,6 +10,32 @@
 
 export const BEAT_FPS = 100;
 
+// Mesure (3 ou 4 temps) et phase qui font le mieux ressortir l'activation
+// « premier temps » ; contraste = moyenne aux premiers temps choisis /
+// moyenne à tous les temps.
+function bestMeter(downbeat, indices) {
+  let best = null;
+  for (const beatsPerBar of [3, 4]) {
+    for (let phase = 0; phase < beatsPerBar; phase++) {
+      let sum = 0, n = 0;
+      for (let k = phase; k < indices.length; k += beatsPerBar) { sum += downbeat[indices[k]]; n++; }
+      const score = n ? sum / n : 0;
+      if (!best || score > best.score) best = { score, beatsPerBar, phase };
+    }
+  }
+  let all = 0;
+  for (const i of indices) all += downbeat[i];
+  const mean = indices.length ? all / indices.length : 0;
+  return { ...best, contrast: mean > 0 ? best.score / mean : 0 };
+}
+
+// Un morceau lent (59 BPM) était compté en croches (118 BPM) : on essaie
+// aussi un temps sur deux, gardé si ses premiers temps ressortent
+// nettement mieux (+15 %). Sur 5 morceaux : même tempo que madmom partout
+// (« Éternel » : 59 au lieu de 118 ; les 4 autres inchangés).
+const HALF_TEMPO_GAIN = 1.15;
+const MIN_BPM = 40;
+
 /**
  * detected : { period, beats: [trame], downbeat: [activation au temps] }.
  * -> { beatTimes: [s], beatsPerBar, phase, tempo }, phase = indice du
@@ -17,20 +43,23 @@ export const BEAT_FPS = 100;
  */
 export function meterAndBars(detected) {
   const { beats, downbeat, period } = detected;
-  let best = null;
-  for (const beatsPerBar of [3, 4]) {
-    for (let phase = 0; phase < beatsPerBar; phase++) {
-      let sum = 0, n = 0;
-      for (let i = phase; i < beats.length; i += beatsPerBar) { sum += downbeat[i]; n++; }
-      const score = n ? sum / n : 0;
-      if (!best || score > best.score) best = { score, beatsPerBar, phase };
+  const all = beats.map((_, i) => i);
+  const base = { indices: all, period, ...bestMeter(downbeat, all) };
+  let best = base;
+  if ((60 * BEAT_FPS) / (2 * period) >= MIN_BPM) {
+    for (const offset of [0, 1]) {
+      const half = all.filter((i) => i % 2 === offset);
+      const m = bestMeter(downbeat, half);
+      if (m.contrast > HALF_TEMPO_GAIN * base.contrast && m.contrast > best.contrast) {
+        best = { indices: half, period: 2 * period, ...m };
+      }
     }
   }
   return {
-    beatTimes: beats.map((f) => f / BEAT_FPS),
-    beatsPerBar: best?.beatsPerBar ?? 4,
-    phase: best?.phase ?? 0,
-    tempo: Math.round((60 * BEAT_FPS) / period),
+    beatTimes: best.indices.map((i) => beats[i] / BEAT_FPS),
+    beatsPerBar: best.beatsPerBar ?? 4,
+    phase: best.phase ?? 0,
+    tempo: Math.round((60 * BEAT_FPS) / best.period),
   };
 }
 

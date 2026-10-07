@@ -3,7 +3,7 @@
 // l'accord en cours en grand et la barre des temps qui défile (barre des
 // accords pour les morceaux analysés avant la détection des temps).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AudioContext, decodeAudioData } from 'react-native-audio-api';
 import { File, Paths } from 'expo-file-system';
@@ -30,6 +30,10 @@ export default function Player({ song, onBack }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [playing, setPlaying] = useState(false);
+  // Lu par les fonctions passées à la barre des temps (mémorisée, elle ne
+  // reçoit pas les nouvelles versions) : toujours à jour.
+  const playingRef = useRef(false);
+  const [syncKey, setSyncKey] = useState(0);
   const [position, setPosition] = useState(0);
   const muted = INSTRUMENTS.find((i) => i.id === song.instrument)?.stem;
   const [enabled, setEnabled] = useState(() => Object.fromEntries(TRACKS.map((t) => [t, t !== muted])));
@@ -50,7 +54,11 @@ export default function Player({ song, onBack }) {
   const chords = useMemo(() => song.chords.filter((c) => c.chord !== 'N')
     .map((c) => (lag ? { ...c, time: Math.max(0, c.time - lag), end: c.end - lag } : c)), [song.id]);
   const cells = useMemo(() => (song.grid ? beatCells(song.grid, song.chords, song.duration) : null), [song.id]);
-  const getTime = () => { const a = audio.current; return a.ctx ? Math.max(0, a.ctx.currentTime - a.startedAt) : 0; };
+  const getTime = useCallback(() => {
+    const a = audio.current;
+    if (!playingRef.current || !a.ctx) return a.offset;
+    return Math.max(0, a.ctx.currentTime - a.startedAt);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +91,7 @@ export default function Player({ song, onBack }) {
     const id = setInterval(() => {
       const a = audio.current;
       const t = a.ctx.currentTime - a.startedAt;
-      if (t >= song.duration) { pause(); setPosition(0); audio.current.offset = 0; return; }
+      if (t >= song.duration) { pause(); audio.current.offset = 0; setPosition(0); setSyncKey((k) => k + 1); return; }
       setPosition(Math.max(0, t));
     }, 100);
     return () => clearInterval(id);
@@ -112,8 +120,11 @@ export default function Player({ song, onBack }) {
       return source;
     });
     a.startedAt = when - from;
+    a.offset = from;
+    playingRef.current = true;
     setPosition(from);
     setPlaying(true);
+    setSyncKey((k) => k + 1);
   }
 
   function pause() {
@@ -121,14 +132,16 @@ export default function Player({ song, onBack }) {
     a.offset = Math.max(0, a.ctx.currentTime - a.startedAt);
     for (const s of a.sources) { try { s.stop(); } catch {} }
     a.sources = [];
+    playingRef.current = false;
     setPlaying(false);
+    setSyncKey((k) => k + 1);
   }
 
   function seek(t) {
     const target = Math.min(Math.max(0, t), song.duration - 0.5);
     audio.current.offset = target;
-    if (playing) play(target);
-    else setPosition(target);
+    if (playingRef.current) play(target);
+    else { setPosition(target); setSyncKey((k) => k + 1); }
   }
 
   function toggle(track) {
@@ -168,7 +181,7 @@ export default function Player({ song, onBack }) {
               numberOfLines={1} adjustsFontSizeToFit>{nowChord ?? '—'}</Text>
             <Text style={styles.muted}>Ensuite : {nextChord ?? '—'}</Text>
             {cells ? (
-              <BeatStrip cells={cells} playing={playing} getTime={getTime} position={position} onSeek={seek} />
+              <BeatStrip cells={cells} playing={playing} getTime={getTime} syncKey={syncKey} onSeek={seek} />
             ) : (
               <ScrollView ref={bar} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bar}>
                 {chords.map((c, i) => (

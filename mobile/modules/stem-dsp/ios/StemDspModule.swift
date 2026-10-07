@@ -106,11 +106,29 @@ public class StemDspModule: Module {
       var mono = [Float](repeating: 0, count: count)
       for i in 0..<count { mono[i] = (Float(l[i]) + Float(r[i])) / 65536 }
       let act = mono.withUnsafeBufferPointer { rnn.activations(mono: $0.baseAddress!, count: count) }
+      // Écrit en boucles explicites : en expressions compactes, le
+      // compilateur Swift des serveurs EAS abandonnait (« unable to
+      // type-check this expression in reasonable time »).
       let frames = act.count / 2
-      let env = (0..<frames).map { act[2 * $0] + act[2 * $0 + 1] }
-      let period = BeatTracker.period(activation: env)
-      let beats = BeatTracker.track(activation: env, period: period)
-      return ["period": period, "beats": beats, "downbeat": beats.map { Double(act[2 * $0 + 1]) }]
+      var env = [Float](repeating: 0, count: frames)
+      for f in 0..<frames {
+        let beat: Float = act[2 * f]
+        let downbeat: Float = act[2 * f + 1]
+        env[f] = beat + downbeat
+      }
+      let period: Int = BeatTracker.period(activation: env)
+      let beats: [Int] = BeatTracker.track(activation: env, period: period)
+      var downbeats: [Double] = []
+      downbeats.reserveCapacity(beats.count)
+      for b in beats {
+        let value: Float = act[2 * b + 1]
+        downbeats.append(Double(value))
+      }
+      var result: [String: Any] = [:]
+      result["period"] = period
+      result["beats"] = beats
+      result["downbeat"] = downbeats
+      return result
     }
 
     // Enregistre une piste (Int16 stéréo) en AAC .m4a (cf. StemAudio).

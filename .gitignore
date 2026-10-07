@@ -2,3 +2,6 @@ tools/dsp-test/stemdsp-test
 tools/chroma/deepchroma-test
 tools/dsp-test/aac-test
 tools/chroma/bass-test
+tools/beats/rnn-test
+tools/beats/track-test
+tools/beats/__pycache__

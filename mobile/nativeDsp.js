@@ -44,6 +44,15 @@ export function bassChroma(left, right) {
   return out;
 }
 
+// Réseau de temps / premiers temps (madmom, cf. DownbeatRNN.swift).
+export function loadDownbeats(uri) {
+  StemDsp.loadDownbeats(uri);
+}
+// -> { period, beats: [trame à 100 /s], downbeat: [activation] }
+export function detectBeats(left, right) {
+  return StemDsp.detectBeats(left, right);
+}
+
 // Enregistre une piste séparée en AAC (.m4a, ~7x plus léger que le WAV).
 export function saveStem(uri, left, right) {
   StemDsp.saveStem(uri, left, right);

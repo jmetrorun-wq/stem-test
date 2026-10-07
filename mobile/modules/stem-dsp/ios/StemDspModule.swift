@@ -9,6 +9,8 @@ public class StemDspModule: Module {
   // Chroma profond (accords), chargé une fois depuis le fichier de poids
   // téléchargé par l'app (deep_chroma.bin, cf. tools/chroma).
   private var deepChroma: DeepChroma?
+  // Réseau de temps / premiers temps (downbeats.bin, cf. tools/beats).
+  private var downbeatRNN: DownbeatRNN?
 
   public func definition() -> ModuleDefinition {
     Name("StemDsp")
@@ -81,6 +83,34 @@ public class StemDspModule: Module {
       let chroma = mono.withUnsafeBufferPointer { BassChroma.shared.compute(mono: $0.baseAddress!, count: count) }
       let dst = out.rawPointer.assumingMemoryBound(to: Float.self)
       for i in 0..<chroma.count { dst[i] = chroma[i] }
+    }
+
+    Function("loadDownbeats") { (uri: String) in
+      let url = URL(string: uri).flatMap { $0.isFileURL ? $0 : nil } ?? URL(fileURLWithPath: uri)
+      self.downbeatRNN = try DownbeatRNN(contentsOf: url)
+    }
+
+    // Temps du morceau (mix Int16 stéréo) : période (trames à 100 /s),
+    // trames des temps, et activation « premier temps » à chacun (pour
+    // choisir la mesure en JS, cf. beats.js).
+    Function("detectBeats") { (left: Int16Array, right: Int16Array) -> [String: Any] in
+      guard let rnn = self.downbeatRNN else {
+        throw Exception(name: "NotLoaded", description: "detectBeats : appeler loadDownbeats d'abord")
+      }
+      let count = left.length
+      guard right.length == count, count > 0 else {
+        throw Exception(name: "BadLength", description: "detectBeats : tailles de tableaux inattendues")
+      }
+      let l = left.rawPointer.assumingMemoryBound(to: Int16.self)
+      let r = right.rawPointer.assumingMemoryBound(to: Int16.self)
+      var mono = [Float](repeating: 0, count: count)
+      for i in 0..<count { mono[i] = (Float(l[i]) + Float(r[i])) / 65536 }
+      let act = mono.withUnsafeBufferPointer { rnn.activations(mono: $0.baseAddress!, count: count) }
+      let frames = act.count / 2
+      let env = (0..<frames).map { act[2 * $0] + act[2 * $0 + 1] }
+      let period = BeatTracker.period(activation: env)
+      let beats = BeatTracker.track(activation: env, period: period)
+      return ["period": period, "beats": beats, "downbeat": beats.map { Double(act[2 * $0 + 1]) }]
     }
 
     // Enregistre une piste (Int16 stéréo) en AAC .m4a (cf. StemAudio).

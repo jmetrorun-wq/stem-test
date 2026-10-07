@@ -1,14 +1,17 @@
 // Écran de jeu : les 4 pistes jouées ensemble, chacune avec son propre
 // volume (couper / remettre un instrument est instantané, sans remixage),
-// l'accord en cours en grand et la barre des accords qui défile.
+// l'accord en cours en grand et la barre des temps qui défile (barre des
+// accords pour les morceaux analysés avant la détection des temps).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AudioContext, decodeAudioData } from 'react-native-audio-api';
 import { File, Paths } from 'expo-file-system';
 
 import { SAMPLE_RATE, TRACKS } from '../separator.js';
 import { CHORD_TIMING, DETECTION_LAG, chordColor } from '../chords.js';
+import { beatCells } from '../beats.js';
+import BeatStrip from './BeatStrip.js';
 import { fmt } from './analyze.js';
 import { stemUri, updateSong } from './library.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
@@ -44,8 +47,10 @@ export default function Player({ song, onBack }) {
   // Barre des accords : seulement les vrais accords (pas les silences).
   // Morceaux analysés avant la correction du retard de détection : recalés.
   const lag = (song.chordTiming ?? 1) < CHORD_TIMING ? DETECTION_LAG : 0;
-  const chords = song.chords.filter((c) => c.chord !== 'N')
-    .map((c) => (lag ? { ...c, time: Math.max(0, c.time - lag), end: c.end - lag } : c));
+  const chords = useMemo(() => song.chords.filter((c) => c.chord !== 'N')
+    .map((c) => (lag ? { ...c, time: Math.max(0, c.time - lag), end: c.end - lag } : c)), [song.id]);
+  const cells = useMemo(() => (song.grid ? beatCells(song.grid, song.chords, song.duration) : null), [song.id]);
+  const getTime = () => { const a = audio.current; return a.ctx ? Math.max(0, a.ctx.currentTime - a.startedAt) : 0; };
 
   useEffect(() => {
     let cancelled = false;
@@ -89,9 +94,9 @@ export default function Player({ song, onBack }) {
   const nowChord = current >= 0 ? chords[current].chord : null;
   const nextChord = current >= 0 ? chords[current + 1]?.chord : chords.find((c) => c.time > chordPos)?.chord;
 
-  // Garde l'accord en cours au centre de la barre.
+  // Garde l'accord en cours au centre de la barre (ancienne barre des accords).
   useEffect(() => {
-    if (current >= 0) bar.current?.scrollTo({ x: Math.max(0, current * CHIP - 140), animated: true });
+    if (!cells && current >= 0) bar.current?.scrollTo({ x: Math.max(0, current * CHIP - 140), animated: true });
   }, [current]);
 
   function play(from = audio.current.offset) {
@@ -146,7 +151,10 @@ export default function Player({ song, onBack }) {
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹ Bibliothèque</Text></TouchableOpacity>
       <Text style={styles.title} numberOfLines={2}>{song.title}</Text>
-      <Text style={styles.muted}>Tonalité : {song.key?.fr} — {fmt(song.duration)}</Text>
+      <Text style={styles.muted}>
+        Tonalité : {song.key?.fr} — {fmt(song.duration)}
+        {song.grid ? ` — ♩ = ${song.grid.tempo}, ${song.grid.beatsPerBar} temps` : ''}
+      </Text>
 
       {!ready && !error && (
         <View style={styles.card}><ActivityIndicator color={C.accent} /><Text style={styles.muted}>Chargement des pistes…</Text></View>
@@ -159,15 +167,19 @@ export default function Player({ song, onBack }) {
             <Text style={[styles.chordNow, { color: nowChord ? chordColor(nowChord) : C.muted }]}
               numberOfLines={1} adjustsFontSizeToFit>{nowChord ?? '—'}</Text>
             <Text style={styles.muted}>Ensuite : {nextChord ?? '—'}</Text>
-            <ScrollView ref={bar} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bar}>
-              {chords.map((c, i) => (
-                <TouchableOpacity key={i} onPress={() => seek(c.time)}
-                  style={[styles.chip, { borderColor: chordColor(c.chord) }, i === current && { backgroundColor: chordColor(c.chord) }]}>
-                  <Text style={[styles.chipText, i === current && styles.chipTextNow]}
-                    numberOfLines={1} adjustsFontSizeToFit>{c.chord}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            {cells ? (
+              <BeatStrip cells={cells} playing={playing} getTime={getTime} position={position} onSeek={seek} />
+            ) : (
+              <ScrollView ref={bar} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bar}>
+                {chords.map((c, i) => (
+                  <TouchableOpacity key={i} onPress={() => seek(c.time)}
+                    style={[styles.chip, { borderColor: chordColor(c.chord) }, i === current && { backgroundColor: chordColor(c.chord) }]}>
+                    <Text style={[styles.chipText, i === current && styles.chipTextNow]}
+                      numberOfLines={1} adjustsFontSizeToFit>{c.chord}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
 
           <View style={styles.card}>

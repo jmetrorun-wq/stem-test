@@ -10,7 +10,8 @@ import * as ort from 'onnxruntime-react-native';
 import { Separator, SAMPLE_RATE, toInt16 } from '../separator.js';
 import { CHORD_TIMING, combineChroma, detectChords, detectKey, spellChord, spellKey } from '../chords.js';
 import { MonolithRunner } from './monolithRunner.js';
-import { bassChroma, deepChroma, loadDeepChroma, nativeDsp } from './nativeDsp.js';
+import { bassChroma, deepChroma, detectBeats, loadDeepChroma, loadDownbeats, nativeDsp } from './nativeDsp.js';
+import { meterAndBars } from '../beats.js';
 import { newSongId, saveSong } from './library.js';
 
 const RELEASE = 'https://github.com/jmetrorun-wq/stem-test/releases/download/model-v1/';
@@ -21,10 +22,14 @@ const MODEL_URL = RELEASE + 'htdemucs_chunk128.onnx';
 // Poids du « chroma profond » de madmom (tools/chroma/export_deep_chroma.py).
 // SHA-256 738c8219d804cbd2ea6a6ddbe85fc1bb88f0847316a2ff2696f56c6b78ced972.
 const CHROMA_URL = RELEASE + 'deep_chroma.bin';
+// Réseau de temps / premiers temps de madmom (tools/beats/export_downbeats.py).
+// SHA-256 468a3b492f99f2be7f1eaf3c4a9947c6e7472b381cb1a6a7bacfece22da5cb70.
+const DOWNBEATS_URL = RELEASE + 'downbeats.bin';
 
 const modelFile = new File(Paths.document, 'htdemucs_chunk128.onnx');
 const chromaFile = new File(Paths.document, 'deep_chroma.bin');
-let chromaLoaded = false;
+const downbeatsFile = new File(Paths.document, 'downbeats.bin');
+let chromaLoaded = false, downbeatsLoaded = false;
 
 // Trace d'avancement écrite sur disque : si iOS tue l'app (mémoire), on
 // retrouve au relancement l'étape où ça s'est arrêté.
@@ -71,6 +76,15 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
 
   // Téléchargements d'abord : rien ne doit échouer après 4 min de calcul.
   await ensureFile(chromaFile, CHROMA_URL, 3e6, 'des poids des accords (4 Mo)', onStatus);
+  await ensureFile(downbeatsFile, DOWNBEATS_URL, 4e6, 'des poids des temps (4 Mo)', onStatus);
+
+  // Temps et mesures, sur le mix complet (comme madmom en production).
+  crumb({ phase: 'temps', duration });
+  onStatus('Détection des temps et des mesures…');
+  await repaint();
+  if (!downbeatsLoaded) { loadDownbeats(downbeatsFile.uri); downbeatsLoaded = true; }
+  const grid = meterAndBars(detectBeats(left, right));
+
   crumb({ phase: 'chargement du modèle', duration });
   await ensureFile(modelFile, MODEL_URL, 100e6, 'du modèle de séparation (174 Mo)', onStatus);
   onStatus('Chargement du modèle…');
@@ -117,6 +131,7 @@ export async function analyzeSong(source, { instrument, short, onStatus, onDetai
     chords,
     chordTiming: CHORD_TIMING,
     chordMethod: 'B',
+    grid,
     instrument,
     createdAt: Date.now(),
     analysisSeconds: Math.round((Date.now() - t0) / 1000),

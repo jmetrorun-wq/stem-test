@@ -151,7 +151,7 @@ export default function Player({ song, onBack, onMetronome }) {
     return () => {
       cancelled = true;
       clearTimeout(seekTimer.current);
-      for (const s of a.sources) { try { s.stop(); } catch {} try { s.disconnect(); } catch {} }
+      for (const s of a.sources) { try { s.stop(); } catch {} try { s.disconnect(); } catch {} try { s.buffer = null; } catch {} }
       a.ctx?.close();
     };
   }, [song.id]);
@@ -177,13 +177,18 @@ export default function Player({ song, onBack, onMetronome }) {
     if (!cells && current >= 0) bar.current?.scrollTo({ x: Math.max(0, current * CHIP - 140), animated: true });
   }, [current]);
 
-  // Arrête ET débranche : de simples stop() laissaient les anciennes
-  // sources branchées ; en enchaînant les sauts (glissements rapides),
-  // elles s'accumulaient dans le moteur audio jusqu'au plantage.
+  // Arrête, débranche et RETIRE la piste de chaque ancienne source.
+  // react-native-audio-api copie entièrement la piste à chaque
+  // « source.buffer = … » (~100 Mo par piste pour 4-5 min) ; la copie
+  // n'était libérée qu'au passage du ramasse-miettes JS. En enchaînant les
+  // glissements, les copies s'empilaient jusqu'à épuiser la mémoire
+  // (rapport de plantage : « out of memory » de Hermes). buffer = null la
+  // libère tout de suite.
   function release(sources) {
     for (const s of sources) {
       try { s.stop(); } catch {}
       try { s.disconnect(); } catch {}
+      try { s.buffer = null; } catch {}
     }
   }
 

@@ -162,7 +162,7 @@ function NewSong({ onCancel, onDone }) {
           <Text style={styles.secondaryText} numberOfLines={1}>{file ? `🎵 ${file.name}` : 'Choisir un fichier audio'}</Text>
         </TouchableOpacity>
 
-        <Text style={styles.label}>2. Ce que je joue</Text>
+        <Text style={styles.label}>2. Mute</Text>
         <View style={styles.wrap}>
           {INSTRUMENTS.map((i) => (
             <TouchableOpacity key={i.id} onPress={() => setInstrument(i.id)} disabled={busy}

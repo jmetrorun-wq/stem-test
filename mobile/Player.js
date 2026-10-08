@@ -301,14 +301,14 @@ export default function Player({ song, onBack }) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.share} onPress={() => runExport('audio')} disabled={!!exporting}>
-              <Text style={styles.shareText}>{exporting === 'audio' ? 'Préparation du morceau…' : '🎵 Le morceau tel que je l\'entends'}</Text>
+              <Text style={styles.shareText}>{exporting === 'audio' ? 'Préparation du morceau…' : '🎵 Extraire le morceau'}</Text>
             </TouchableOpacity>
             <Text style={styles.muted}>Le morceau est exporté avec les pistes actives : coupe la voix pour une version instrumentale.</Text>
             {exportError ? <Text style={styles.err}>Échec : {exportError}</Text> : null}
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.label}>Je joue :</Text>
+            <Text style={styles.label}>Mute :</Text>
             <View style={styles.wrap}>
               {INSTRUMENTS.map((i) => (
                 <TouchableOpacity key={i.id} onPress={() => changeInstrument(i.id)}

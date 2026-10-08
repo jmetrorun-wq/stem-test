@@ -6,3 +6,4 @@ tools/beats/rnn-test
 tools/beats/track-test
 tools/beats/__pycache__
 tools/dsp-test/mix-test
+tools/tuner/tuner-test

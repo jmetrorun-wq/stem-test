@@ -3,7 +3,7 @@
     "name": "ChordSplit",
     "slug": "stem-test",
     "owner": "djazzy97418",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -36,7 +36,8 @@
       [
         "react-native-audio-api",
         {
-          "iosBackgroundMode": false
+          "iosBackgroundMode": false,
+          "iosMicrophonePermission": "ChordSplit utilise le micro pour l'accordeur : il écoute la note que tu joues."
         }
       ],
       [

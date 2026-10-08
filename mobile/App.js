@@ -12,6 +12,7 @@ import * as Updates from 'expo-updates';
 import { analyzeSong, fmt, readCrumb } from './analyze.js';
 import { deleteSong, listSongs, songSizeMb } from './library.js';
 import Player from './Player.js';
+import Tuner from './Tuner.js';
 import { C, INSTRUMENTS } from './theme.js';
 
 // Version autonome (build « preview ») : au lancement, si une mise à jour
@@ -56,6 +57,9 @@ export default function App() {
   if (screen === 'play' && current) {
     return <><StatusBar style="light" /><Player song={current} onBack={() => { refresh(); setScreen('library'); }} /></>;
   }
+  if (screen === 'tuner') {
+    return <><StatusBar style="light" /><Tuner onBack={() => setScreen('library')} /></>;
+  }
   if (screen === 'new') {
     return (
       <>
@@ -87,6 +91,9 @@ export default function App() {
 
       <TouchableOpacity style={styles.primary} onPress={() => setScreen('new')}>
         <Text style={styles.primaryText}>＋ Nouveau morceau</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.secondary} onPress={() => setScreen('tuner')}>
+        <Text style={styles.secondaryText}>🎸 Accordeur</Text>
       </TouchableOpacity>
 
       <Text style={styles.h2}>Mes morceaux</Text>

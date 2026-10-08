@@ -145,6 +145,19 @@ public class StemDspModule: Module {
       try StemAudio.mixAAC(inputs: inputs, gains: floatGains, output: out)
     }
 
+    // Accordeur : fréquence (Hz) jouée dans `samples` (mono), -1 si aucune
+    // note nette entre fmin et fmax (cf. PitchDetector).
+    Function("detectPitch") { (samples: Float32Array, sampleRate: Double, fmin: Double, fmax: Double) -> Double in
+      let count: Int = samples.length
+      let pointer = samples.rawPointer.assumingMemoryBound(to: Float.self)
+      let result: Double = PitchDetector.shared.detect(samples: pointer, count: count, sampleRate: sampleRate, fmin: fmin, fmax: fmax)
+      return result
+    }
+
+    Function("resetPitch") {
+      PitchDetector.shared.reset()
+    }
+
     // Enregistre une piste (Int16 stéréo) en AAC .m4a (cf. StemAudio).
     Function("saveStem") { (uri: String, left: Int16Array, right: Int16Array) in
       guard left.length == right.length, left.length > 0 else {

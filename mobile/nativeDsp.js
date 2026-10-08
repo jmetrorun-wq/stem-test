@@ -63,3 +63,11 @@ export function saveStem(uri, left, right) {
 export function mixStems(uris, gains, outputUri) {
   return StemDsp.mixStems(uris, gains, outputUri);
 }
+
+// Accordeur : fréquence jouée (Hz) ou -1 (cf. PitchDetector.swift).
+export function detectPitch(samples, sampleRate, fmin, fmax) {
+  return StemDsp.detectPitch(samples, sampleRate, fmin, fmax);
+}
+export function resetPitch() {
+  StemDsp.resetPitch();
+}

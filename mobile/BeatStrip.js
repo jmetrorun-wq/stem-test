@@ -12,7 +12,7 @@
 // temps (lancer le déplacement suivant, changer la case active).
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { chordColor } from '../chords.js';
 import { C } from './theme.js';
@@ -41,9 +41,21 @@ const Cell = memo(function Cell({ cell, active, onPress }) {
   );
 });
 
+// Temps (s) correspondant à une position x (px depuis la 1re case).
+function timeAt(cells, px) {
+  const idx = Math.max(0, Math.min(cells.length - 1, Math.floor(px / CELL)));
+  const cell = cells[idx];
+  const frac = Math.max(0, Math.min(1, px / CELL - idx));
+  return cell.start + frac * (cell.end - cell.start);
+}
+
 /**
  * getTime() renvoie la position de lecture (s) ; syncKey change à chaque
  * lecture / saut / pause pour se recaler. onSeek(t) : saut.
+ *
+ * Glisser la bande au doigt (même pendant la lecture) la déplace ; au
+ * relâchement, la musique saute à l'endroit sous le trait central. Un
+ * simple toucher sur une case y saute toujours.
  */
 function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
   const [width, setWidth] = useState(0);
@@ -56,6 +68,8 @@ function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
   // passent par une référence toujours à jour.
   const seekRef = useRef(onSeek);
   seekRef.current = onSeek;
+  // Glissement au doigt en cours : le suivi de la lecture s'interrompt.
+  const drag = useRef({ active: false, base: 0 }).current;
 
   useEffect(() => {
     let stopped = false;
@@ -63,7 +77,7 @@ function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
     // Se cale sur la position réelle, puis (en lecture) glisse jusqu'au
     // temps suivant à vitesse constante et recommence à son arrivée.
     const step = () => {
-      if (stopped) return;
+      if (stopped || drag.active) return;
       const t = getTimeRef.current();
       const idx = cellAt(cells, t);
       const cell = cells[idx];
@@ -90,10 +104,36 @@ function BeatStrip({ cells, playing, getTime, syncKey, onSeek }) {
   }, [playing, syncKey, cells]);
 
   const handlers = useMemo(() => cells.map((c) => () => seekRef.current(c.start + 0.03)), [cells]);
+
+  const maxX = cells.length * CELL;
+  const pan = useMemo(() => PanResponder.create({
+    // Un toucher simple reste aux cases ; seul un vrai glissement
+    // horizontal prend la main.
+    // Phase de capture : la bande prend la main même si le doigt est parti
+    // d'une case (qui, sinon, garderait le toucher).
+    onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      drag.active = true;
+      x.stopAnimation((value) => { drag.base = value; });
+    },
+    onPanResponderMove: (_, g) => {
+      x.setValue(Math.max(0, Math.min(maxX, drag.base - g.dx)));
+    },
+    onPanResponderRelease: (_, g) => {
+      const px = Math.max(0, Math.min(maxX - 1, drag.base - g.dx));
+      drag.active = false;
+      seekRef.current(timeAt(cells, px));
+    },
+    onPanResponderTerminate: () => {
+      drag.active = false;
+      seekRef.current(getTimeRef.current());
+    },
+  }), [cells]);
   const translateX = useMemo(() => Animated.multiply(x, -1), [x]);
 
   return (
-    <View style={styles.frame} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+    <View style={styles.frame} onLayout={(e) => setWidth(e.nativeEvent.layout.width)} {...pan.panHandlers}>
       <Animated.View style={[styles.row, { left: width / 2, transform: [{ translateX }] }]}>
         {cells.map((cell, i) => <Cell key={i} cell={cell} active={i === active} onPress={handlers[i]} />)}
       </Animated.View>

@@ -16,6 +16,7 @@ import ChordDiagram from './ChordDiagram.js';
 import { shareChordChart, shareMix } from './exports.js';
 import { fmt } from './analyze.js';
 import { stemUri, updateSong } from './library.js';
+import { StemPlayer } from './stemPlayer.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
 
 const CHIP = 96; // largeur d'une case d'accord (+ marge) : tient « Bbm7b5/E »
@@ -143,6 +144,7 @@ export default function Player({ song, onBack }) {
           gain.connect(a.ctx.destination);
           a.gains[track] = gain;
         }
+        a.player = new StemPlayer(a.ctx, a.buffers, a.gains);
         setReady(true);
       } catch (e) {
         setError(String(e?.message || e));
@@ -151,7 +153,7 @@ export default function Player({ song, onBack }) {
     return () => {
       cancelled = true;
       clearTimeout(seekTimer.current);
-      for (const s of a.sources) { try { s.stop(); } catch {} try { s.disconnect(); } catch {} try { s.buffer = null; } catch {} }
+      a.player?.stop();
       a.ctx?.close();
     };
   }, [song.id]);
@@ -177,34 +179,11 @@ export default function Player({ song, onBack }) {
     if (!cells && current >= 0) bar.current?.scrollTo({ x: Math.max(0, current * CHIP - 140), animated: true });
   }, [current]);
 
-  // Arrête, débranche et RETIRE la piste de chaque ancienne source.
-  // react-native-audio-api copie entièrement la piste à chaque
-  // « source.buffer = … » (~100 Mo par piste pour 4-5 min) ; la copie
-  // n'était libérée qu'au passage du ramasse-miettes JS. En enchaînant les
-  // glissements, les copies s'empilaient jusqu'à épuiser la mémoire
-  // (rapport de plantage : « out of memory » de Hermes). buffer = null la
-  // libère tout de suite.
-  function release(sources) {
-    for (const s of sources) {
-      try { s.stop(); } catch {}
-      try { s.disconnect(); } catch {}
-      try { s.buffer = null; } catch {}
-    }
-  }
-
+  // Lecture par petits morceaux (StemPlayer) : un saut ne recopie plus
+  // les pistes entières (~400 Mo), cause des plantages en glissant.
   function play(from = audio.current.offset) {
     const a = audio.current;
-    release(a.sources);
-    // Toutes les pistes démarrent au même instant de l'horloge audio.
-    const when = a.ctx.currentTime + 0.1;
-    a.sources = TRACKS.map((track) => {
-      const source = a.ctx.createBufferSource();
-      source.buffer = a.buffers[track];
-      source.connect(a.gains[track]);
-      source.start(when, from);
-      return source;
-    });
-    a.startedAt = when - from;
+    a.startedAt = a.player.start(from);
     a.offset = from;
     playingRef.current = true;
     setPosition(from);
@@ -216,8 +195,7 @@ export default function Player({ song, onBack }) {
     const a = audio.current;
     a.offset = Math.max(0, a.ctx.currentTime - a.startedAt);
     clearTimeout(seekTimer.current);
-    release(a.sources);
-    a.sources = [];
+    a.player.stop();
     playingRef.current = false;
     setPlaying(false);
     setSyncKey((k) => k + 1);

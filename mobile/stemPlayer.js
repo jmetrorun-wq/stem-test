@@ -47,8 +47,14 @@ export class StemPlayer {
       return { track, node };
     });
     this.fill();
-    for (const { node } of this.nodes) node.start(when);
-    this.timer = setInterval(() => this.fill(), REFILL_MS);
+    // Position 0 explicite : sans elle, AudioBufferQueueSourceNode.start de
+    // react-native-audio-api prend offset = -1 par défaut puis le refuse
+    // lui-même (RangeError), ce qui fermait l'app au lancement.
+    for (const { node } of this.nodes) node.start(when, 0);
+    // Rattrapé : une erreur dans une minuterie fermerait l'app.
+    this.timer = setInterval(() => {
+      try { this.fill(); } catch (e) { this.stop(); this.onError?.(e); }
+    }, REFILL_MS);
     return when - from;
   }
 

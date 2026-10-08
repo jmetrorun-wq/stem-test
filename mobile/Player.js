@@ -35,6 +35,7 @@ export default function Player({ song, onBack, onMetronome }) {
   // Lu par les fonctions passées à la barre des temps (mémorisée, elle ne
   // reçoit pas les nouvelles versions) : toujours à jour.
   const playingRef = useRef(false);
+  const seekTimer = useRef(null);
   const [syncKey, setSyncKey] = useState(0);
   // Export en cours (« pdf » / « audio ») et éventuel message d'erreur.
   const [exporting, setExporting] = useState(null);
@@ -122,7 +123,10 @@ export default function Player({ song, onBack, onMetronome }) {
     };
     schedule();
     const id = setInterval(schedule, 150);
-    return () => { clearInterval(id); for (const s of scheduled) { try { s.stop(); } catch {} } };
+    return () => {
+      clearInterval(id);
+      for (const s of scheduled) { try { s.stop(); } catch {} try { s.disconnect(); } catch {} }
+    };
   }, [playing, click, syncKey]);
 
   useEffect(() => {
@@ -146,7 +150,8 @@ export default function Player({ song, onBack, onMetronome }) {
     })();
     return () => {
       cancelled = true;
-      for (const s of a.sources) { try { s.stop(); } catch {} }
+      clearTimeout(seekTimer.current);
+      for (const s of a.sources) { try { s.stop(); } catch {} try { s.disconnect(); } catch {} }
       a.ctx?.close();
     };
   }, [song.id]);
@@ -172,9 +177,19 @@ export default function Player({ song, onBack, onMetronome }) {
     if (!cells && current >= 0) bar.current?.scrollTo({ x: Math.max(0, current * CHIP - 140), animated: true });
   }, [current]);
 
+  // Arrête ET débranche : de simples stop() laissaient les anciennes
+  // sources branchées ; en enchaînant les sauts (glissements rapides),
+  // elles s'accumulaient dans le moteur audio jusqu'au plantage.
+  function release(sources) {
+    for (const s of sources) {
+      try { s.stop(); } catch {}
+      try { s.disconnect(); } catch {}
+    }
+  }
+
   function play(from = audio.current.offset) {
     const a = audio.current;
-    for (const s of a.sources) { try { s.stop(); } catch {} }
+    release(a.sources);
     // Toutes les pistes démarrent au même instant de l'horloge audio.
     const when = a.ctx.currentTime + 0.1;
     a.sources = TRACKS.map((track) => {
@@ -195,18 +210,22 @@ export default function Player({ song, onBack, onMetronome }) {
   function pause() {
     const a = audio.current;
     a.offset = Math.max(0, a.ctx.currentTime - a.startedAt);
-    for (const s of a.sources) { try { s.stop(); } catch {} }
+    clearTimeout(seekTimer.current);
+    release(a.sources);
     a.sources = [];
     playingRef.current = false;
     setPlaying(false);
     setSyncKey((k) => k + 1);
   }
 
+  // Sauts rapprochés (glissements enchaînés) regroupés : seul le dernier
+  // relance les pistes, 150 ms après.
   function seek(t) {
     const target = Math.min(Math.max(0, t), song.duration - 0.5);
     audio.current.offset = target;
-    if (playingRef.current) play(target);
-    else { setPosition(target); setSyncKey((k) => k + 1); }
+    if (!playingRef.current) { setPosition(target); setSyncKey((k) => k + 1); return; }
+    clearTimeout(seekTimer.current);
+    seekTimer.current = setTimeout(() => { if (playingRef.current) play(audio.current.offset); }, 150);
   }
 
   function toggle(track) {

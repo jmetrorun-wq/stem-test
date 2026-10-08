@@ -145,6 +145,7 @@ export default function Player({ song, onBack, onMetronome }) {
           a.gains[track] = gain;
         }
         a.player = new StemPlayer(a.ctx, a.buffers, a.gains);
+        a.player.onError = (e) => { playingRef.current = false; setPlaying(false); setError(`Lecture interrompue : ${e?.message || e}`); };
         setReady(true);
       } catch (e) {
         setError(String(e?.message || e));
@@ -183,7 +184,14 @@ export default function Player({ song, onBack, onMetronome }) {
   // les pistes entières (~400 Mo), cause des plantages en glissant.
   function play(from = audio.current.offset) {
     const a = audio.current;
-    a.startedAt = a.player.start(from);
+    // Une erreur non rattrapée ferme l'app en production : on l'affiche.
+    try {
+      a.startedAt = a.player.start(from);
+    } catch (e) {
+      try { a.player.stop(); } catch {}
+      setError(`Lecture impossible : ${e?.message || e}`);
+      return;
+    }
     a.offset = from;
     playingRef.current = true;
     setPosition(from);

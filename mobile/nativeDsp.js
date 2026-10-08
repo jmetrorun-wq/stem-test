@@ -57,3 +57,9 @@ export function detectBeats(left, right) {
 export function saveStem(uri, left, right) {
   StemDsp.saveStem(uri, left, right);
 }
+
+// Additionne des pistes .m4a et enregistre le résultat en AAC (export
+// « ce que j'entends », par exemple sans la voix).
+export function mixStems(uris, gains, outputUri) {
+  return StemDsp.mixStems(uris, gains, outputUri);
+}

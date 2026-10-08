@@ -41,4 +41,63 @@ public enum StemAudio {
     }
     // Le fichier est finalisé à la libération de `file`, en fin de fonction.
   }
+
+  /// Additionne des pistes (.m4a, mêmes format et longueur) avec leurs
+  /// gains et enregistre le résultat en AAC : export « ce que j'entends »
+  /// (par exemple sans la voix). Par tranches de 10 s, sans tout charger.
+  public static func mixAAC(inputs: [URL], gains: [Float], output: URL) throws {
+    guard !inputs.isEmpty, inputs.count == gains.count else {
+      throw NSError(domain: "StemAudio", code: 2, userInfo: [NSLocalizedDescriptionKey: "aucune piste à exporter"])
+    }
+    // Boucles explicites (cf. StemDspModule : le compilateur d'EAS rejette
+    // parfois les expressions compactes).
+    var files: [AVAudioFile] = []
+    var length: AVAudioFramePosition = .max
+    for url in inputs {
+      let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+      files.append(file)
+      if file.length < length { length = file.length }
+    }
+    let format = files[0].processingFormat
+    try? FileManager.default.removeItem(at: output)
+    let settings: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVSampleRateKey: format.sampleRate,
+      AVNumberOfChannelsKey: format.channelCount,
+      AVEncoderBitRateKey: bitRate,
+    ]
+    let out = try AVAudioFile(forWriting: output, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+    let chunk = AVAudioFrameCount(sampleRate * 10)
+    guard let mix = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk),
+          let read = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else {
+      throw NSError(domain: "StemAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "tampon audio impossible à créer"])
+    }
+    let channels = Int(format.channelCount)
+    var done: AVAudioFramePosition = 0
+    while done < length {
+      let n = AVAudioFrameCount(min(AVAudioFramePosition(chunk), length - done))
+      mix.frameLength = n
+      for c in 0..<channels {
+        let dst = mix.floatChannelData![c]
+        for i in 0..<Int(n) { dst[i] = 0 }
+      }
+      for (k, file) in files.enumerated() {
+        read.frameLength = 0
+        try file.read(into: read, frameCount: n)
+        let gain: Float = gains[k]
+        let count = Int(read.frameLength)
+        for c in 0..<channels {
+          let src = read.floatChannelData![c]
+          let dst = mix.floatChannelData![c]
+          for i in 0..<count { dst[i] += src[i] * gain }
+        }
+      }
+      for c in 0..<channels {
+        let dst = mix.floatChannelData![c]
+        for i in 0..<Int(n) { dst[i] = max(-1, min(1, dst[i])) }
+      }
+      try out.write(from: mix)
+      done += AVAudioFramePosition(n)
+    }
+  }
 }

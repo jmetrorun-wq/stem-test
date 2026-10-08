@@ -13,6 +13,7 @@ import { CHORD_TIMING, DETECTION_LAG, chordColor } from '../chords.js';
 import { beatCells, meterAndBars } from '../beats.js';
 import BeatStrip from './BeatStrip.js';
 import ChordDiagram from './ChordDiagram.js';
+import { shareChordChart, shareMix } from './exports.js';
 import { fmt } from './analyze.js';
 import { stemUri, updateSong } from './library.js';
 import { C, INSTRUMENTS, TRACK_LABELS } from './theme.js';
@@ -35,24 +36,25 @@ export default function Player({ song, onBack }) {
   // reçoit pas les nouvelles versions) : toujours à jour.
   const playingRef = useRef(false);
   const [syncKey, setSyncKey] = useState(0);
+  // Export en cours (« pdf » / « audio ») et éventuel message d'erreur.
+  const [exporting, setExporting] = useState(null);
+  const [exportError, setExportError] = useState('');
+  async function runExport(kind) {
+    setExporting(kind); setExportError('');
+    try {
+      if (kind === 'pdf') await shareChordChart(song, grid, cells);
+      else await shareMix(song, enabled);
+    } catch (e) {
+      setExportError(String(e?.message || e));
+    } finally {
+      setExporting(null);
+    }
+  }
   // Diagramme affiché (guitare / piano) et clic sur les temps : mémorisés.
   const [diagram, setDiagram] = useState(() => readSettings().diagram ?? (song.instrument === 'guitar' ? 'guitar' : 'piano'));
   const [click, setClick] = useState(() => readSettings().click ?? false);
   const chooseDiagram = (d) => { setDiagram(d); writeSettings({ diagram: d }); };
   const toggleClick = () => { const next = !click; setClick(next); writeSettings({ click: next }); };
-  // Diagnostic : retard maximal du JS sur les 2 dernières secondes
-  // (minuterie de 100 ms qui arrive en retard = JS surchargé).
-  const [jsLag, setJsLag] = useState(0);
-  useEffect(() => {
-    let last = Date.now(), worst = 0, since = Date.now();
-    const id = setInterval(() => {
-      const now = Date.now();
-      worst = Math.max(worst, now - last - 100);
-      last = now;
-      if (now - since >= 2000) { setJsLag(worst); worst = 0; since = now; }
-    }, 100);
-    return () => clearInterval(id);
-  }, []);
   const [position, setPosition] = useState(0);
   const muted = INSTRUMENTS.find((i) => i.id === song.instrument)?.stem;
   const [enabled, setEnabled] = useState(() => Object.fromEntries(TRACKS.map((t) => [t, t !== muted])));
@@ -292,6 +294,20 @@ export default function Player({ song, onBack }) {
           </View>
 
           <View style={styles.card}>
+            <Text style={styles.label}>Partager</Text>
+            {cells && (
+              <TouchableOpacity style={styles.share} onPress={() => runExport('pdf')} disabled={!!exporting}>
+                <Text style={styles.shareText}>{exporting === 'pdf' ? 'Préparation de la grille…' : '📄 Grille d\'accords (PDF)'}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.share} onPress={() => runExport('audio')} disabled={!!exporting}>
+              <Text style={styles.shareText}>{exporting === 'audio' ? 'Préparation du morceau…' : '🎵 Le morceau tel que je l\'entends'}</Text>
+            </TouchableOpacity>
+            <Text style={styles.muted}>Le morceau est exporté avec les pistes actives : coupe la voix pour une version instrumentale.</Text>
+            {exportError ? <Text style={styles.err}>Échec : {exportError}</Text> : null}
+          </View>
+
+          <View style={styles.card}>
             <Text style={styles.label}>Je joue :</Text>
             <View style={styles.wrap}>
               {INSTRUMENTS.map((i) => (
@@ -312,7 +328,6 @@ export default function Player({ song, onBack }) {
           </View>
         </>
       )}
-      <Text style={styles.debug}>Diagnostic — retard du JS : {jsLag} ms{jsLag > 300 ? ' (surchargé)' : ''}</Text>
     </ScrollView>
   );
 }
@@ -352,5 +367,6 @@ const styles = StyleSheet.create({
   toggleText: { color: C.text, fontSize: 14 },
   toggleTextOn: { color: '#111', fontWeight: '600' },
   clickBtn: { alignSelf: 'center' },
-  debug: { color: '#555b68', fontSize: 11, textAlign: 'center', marginTop: 8 },
+  share: { backgroundColor: C.chip, borderRadius: 10, padding: 13, alignItems: 'center' },
+  shareText: { color: C.text, fontSize: 15 },
 });

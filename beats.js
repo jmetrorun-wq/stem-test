@@ -89,3 +89,26 @@ export function beatCells(grid, chords, duration) {
   }
   return cells;
 }
+
+/**
+ * Grille par mesures pour l'export : [{ number, chords: [noms] }], avec
+ * une éventuelle levée (temps avant le premier premier temps) en mesure 0.
+ * Une mesure liste ses accords successifs (deux si l'accord change en
+ * cours de mesure, ce que la grille de ChordSplit, un accord par mesure,
+ * ne montrait pas) ; '—' si aucun accord.
+ */
+export function barsFromCells(cells) {
+  const bars = [];
+  let current = null;
+  cells.forEach((cell, i) => {
+    if (cell.barStart || i === 0) {
+      current = { number: cell.barStart ? bars.filter((b) => b.number > 0).length + 1 : 0, chords: [] };
+      bars.push(current);
+    }
+    const last = current.chords[current.chords.length - 1];
+    if (cell.chord !== 'N' && cell.chord !== last) current.chords.push(cell.chord);
+  });
+  // Levée sans accord : inutile dans la grille.
+  if (bars[0]?.number === 0 && !bars[0].chords.length) bars.shift();
+  return bars.map((b) => ({ ...b, chords: b.chords.length ? b.chords : ['—'] }));
+}

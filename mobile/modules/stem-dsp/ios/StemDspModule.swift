@@ -131,6 +131,20 @@ public class StemDspModule: Module {
       return result
     }
 
+    // Export « ce que j'entends » : additionne les pistes choisies (.m4a)
+    // et enregistre le résultat en AAC. En arrière-plan (quelques secondes).
+    AsyncFunction("mixStems") { (uris: [String], gains: [Double], output: String) in
+      var inputs: [URL] = []
+      for uri in uris {
+        let url: URL = URL(string: uri).flatMap { $0.isFileURL ? $0 : nil } ?? URL(fileURLWithPath: uri)
+        inputs.append(url)
+      }
+      var floatGains: [Float] = []
+      for g in gains { floatGains.append(Float(g)) }
+      let out: URL = URL(string: output).flatMap { $0.isFileURL ? $0 : nil } ?? URL(fileURLWithPath: output)
+      try StemAudio.mixAAC(inputs: inputs, gains: floatGains, output: out)
+    }
+
     // Enregistre une piste (Int16 stéréo) en AAC .m4a (cf. StemAudio).
     Function("saveStem") { (uri: String, left: Int16Array, right: Int16Array) in
       guard left.length == right.length, left.length > 0 else {

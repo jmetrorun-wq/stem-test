@@ -27,6 +27,8 @@
       },
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
@@ -52,6 +54,12 @@
         "projectId": "08634fde-de89-4457-92e0-b7cc9915a5be"
       }
     },
-    "backgroundColor": "#000000"
+    "backgroundColor": "#000000",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/08634fde-de89-4457-92e0-b7cc9915a5be"
+    }
   }
 }

@@ -7,13 +7,44 @@ import { Alert, Image, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, V
 import { StatusBar } from 'expo-status-bar';
 import * as DocumentPicker from 'expo-document-picker';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Updates from 'expo-updates';
 
 import { analyzeSong, fmt, readCrumb } from './analyze.js';
 import { deleteSong, listSongs, songSizeMb } from './library.js';
 import Player from './Player.js';
 import { C, INSTRUMENTS } from './theme.js';
 
+// Version autonome (build « preview ») : au lancement, si une mise à jour
+// EAS Update est disponible, la télécharger et redémarrer dessus tout de
+// suite (sinon elle ne s'appliquerait qu'au lancement suivant). Seulement
+// depuis la bibliothèque, jamais pendant une analyse.
+function useUpdateOnLaunch() {
+  const [status, setStatus] = useState('');
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled) return;
+    (async () => {
+      try {
+        const check = await Updates.checkForUpdateAsync();
+        if (!check.isAvailable) return;
+        setStatus('Mise à jour de l\'app…');
+        await Updates.fetchUpdateAsync();
+        await Updates.reloadAsync();
+      } catch {
+        setStatus(''); // hors connexion : on garde la version actuelle
+      }
+    })();
+  }, []);
+  return status;
+}
+
+const versionLabel = () => {
+  const date = Updates.createdAt ? Updates.createdAt.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null;
+  if (Updates.isEmbeddedLaunch || !date) return 'Version intégrée au build';
+  return `Mise à jour du ${date}`;
+};
+
 export default function App() {
+  const updating = useUpdateOnLaunch();
   const [screen, setScreen] = useState('library');
   const [songs, setSongs] = useState(listSongs);
   const [current, setCurrent] = useState(null);
@@ -40,6 +71,7 @@ export default function App() {
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <StatusBar style="light" />
       <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
+      {updating ? <Text style={styles.hint}>{updating}</Text> : null}
 
       {previous && previous.phase !== 'fini' && (
         <View style={styles.card}>
@@ -77,6 +109,7 @@ export default function App() {
         </TouchableOpacity>
       ))}
       {songs.length > 0 && <Text style={styles.hint}>Appui long sur un morceau pour le supprimer.</Text>}
+      <Text style={[styles.hint, { marginTop: 16 }]}>{versionLabel()}</Text>
     </ScrollView>
   );
 }

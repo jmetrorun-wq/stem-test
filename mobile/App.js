@@ -13,6 +13,7 @@ import { analyzeSong, fmt, readCrumb } from './analyze.js';
 import { deleteSong, listSongs, songSizeMb } from './library.js';
 import Player from './Player.js';
 import Tuner from './Tuner.js';
+import Metronome from './Metronome.js';
 import { C, INSTRUMENTS } from './theme.js';
 
 // Version autonome (build « preview ») : au lancement, si une mise à jour
@@ -53,9 +54,28 @@ export default function App() {
 
   const refresh = () => setSongs(listSongs());
   const open = (song) => { setCurrent(song); setScreen('play'); };
+  // Métronome : depuis la bibliothèque (100 BPM, 4 temps) ou depuis un
+  // morceau (son tempo et sa mesure), avec retour à l'écran d'origine.
+  const [metronome, setMetronome] = useState({ tempo: 100, beats: 4, from: 'library' });
+  const openMetronome = (tempo, beats, from) => { setMetronome({ tempo, beats, from }); setScreen('metronome'); };
 
+  if (screen === 'metronome') {
+    return (
+      <>
+        <StatusBar style="light" />
+        <Metronome initialTempo={metronome.tempo} initialBeats={metronome.beats}
+          onBack={() => setScreen(metronome.from === 'play' && current ? 'play' : 'library')} />
+      </>
+    );
+  }
   if (screen === 'play' && current) {
-    return <><StatusBar style="light" /><Player song={current} onBack={() => { refresh(); setScreen('library'); }} /></>;
+    return (
+      <>
+        <StatusBar style="light" />
+        <Player song={current} onBack={() => { refresh(); setScreen('library'); }}
+          onMetronome={(tempo, beats) => openMetronome(tempo, beats, 'play')} />
+      </>
+    );
   }
   if (screen === 'tuner') {
     return <><StatusBar style="light" /><Tuner onBack={() => setScreen('library')} /></>;
@@ -92,9 +112,14 @@ export default function App() {
       <TouchableOpacity style={styles.primary} onPress={() => setScreen('new')}>
         <Text style={styles.primaryText}>＋ Nouveau morceau</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.secondary} onPress={() => setScreen('tuner')}>
-        <Text style={styles.secondaryText}>🎸 Accordeur</Text>
-      </TouchableOpacity>
+      <View style={styles.row}>
+        <TouchableOpacity style={[styles.secondary, { flex: 1 }]} onPress={() => setScreen('tuner')}>
+          <Text style={styles.secondaryText}>🎸 Accordeur</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.secondary, { flex: 1 }]} onPress={() => openMetronome(100, 4, 'library')}>
+          <Text style={styles.secondaryText}>⏱ Métronome</Text>
+        </TouchableOpacity>
+      </View>
 
       <Text style={styles.h2}>Mes morceaux</Text>
       {songs.length === 0 && (

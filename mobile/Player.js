@@ -28,7 +28,7 @@ const settingsFile = new File(Paths.document, 'settings.json');
 const readSettings = () => { try { return settingsFile.exists ? JSON.parse(settingsFile.textSync()) : {}; } catch { return {}; } };
 const writeSettings = (patch) => { try { settingsFile.write(JSON.stringify({ ...readSettings(), ...patch })); } catch {} };
 
-export default function Player({ song, onBack }) {
+export default function Player({ song, onBack, onMetronome }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [playing, setPlaying] = useState(false);
@@ -279,6 +279,12 @@ export default function Player({ song, onBack }) {
 
           <View style={styles.card}>
             <Text style={styles.time}>{fmt(position)} / {fmt(song.duration)}</Text>
+            {grid && onMetronome && (
+              <TouchableOpacity onPress={() => { if (playingRef.current) pause(); onMetronome(grid.tempo, grid.beatsPerBar); }}
+                style={[styles.pill, styles.clickBtn]}>
+                <Text style={styles.pillText}>⏱ Métronome à ♩ = {grid.tempo}</Text>
+              </TouchableOpacity>
+            )}
             {grid && (
               <TouchableOpacity onPress={toggleClick} style={[styles.pill, styles.clickBtn, click && styles.pillOn]}>
                 <Text style={[styles.pillText, click && styles.pillTextOn]}>{click ? '🔔 Clic sur les temps : oui' : '🔕 Clic sur les temps : non'}</Text>
